@@ -19,7 +19,7 @@ class Order(Base, TimestampMixin):
     __tablename__ = "orders"
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
-    call_session_id: Mapped[int] = mapped_column(
+    call_session_id: Mapped[UUID] = mapped_column(
         ForeignKey("call_sessions.id", ondelete="RESTRICT"), index=True, nullable=False
     )
     pickup_street: Mapped[str | None] = mapped_column(String(250), nullable=True)
