@@ -1,16 +1,20 @@
+from datetime import datetime
 from enum import StrEnum
 from uuid import UUID, uuid4
 
 
-from sqlalchemy import ForeignKey, String, Enum, Uuid
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import DateTime, ForeignKey, String, Enum, Uuid, func
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base, TimestampMixin
 
 
 class OrderState(StrEnum):
     DRAFT = "draft"  # Заказ в процессе сбора данных
-    CONFIRMED = "confirmed"  # Пользователь подтвердил, точка невозврата
+    CONFIRMED = "confirmed"  # Пользователь подтвердил
+    SEARCHING = "searghing"  # Поиск водителя
+    ASSIGNED = "assigned"  # Водитель назначен
+    IN_PROGRESS = "in_progress"  # В процессе выполнения
     COMPLETED = "completed"  # Заказ завершён успешно
     CANCELLED = "cancelled"  # Заказ отменён
 
@@ -22,14 +26,52 @@ class Order(Base, TimestampMixin):
     call_session_id: Mapped[UUID] = mapped_column(
         ForeignKey("call_sessions.id", ondelete="RESTRICT"), index=True, nullable=False
     )
+    pickup_town: Mapped[str | None] = mapped_column(String(250), nullable=True)
+    pickup_town_id: Mapped[int | None] = mapped_column(
+        ForeignKey("towns.id", ondelete="SET NULL"), nullable=True
+    )
+
+    pickup_district: Mapped[str | None] = mapped_column(String(250), nullable=True)
+    pickup_district_id: Mapped[int | None] = mapped_column(
+        ForeignKey("districts.id", ondelete="SET NULL"), nullable=True
+    )
+
     pickup_street: Mapped[str | None] = mapped_column(String(250), nullable=True)
     pickup_street_id: Mapped[int | None] = mapped_column(
         ForeignKey("streets.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    pickup_house: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    pickup_house_id: Mapped[int | None] = mapped_column(
+        ForeignKey("houses.id", ondelete="SET NULL"), nullable=True
+    )
+    pickup_landmark: Mapped[str | None] = mapped_column(String(250), nullable=True)
+    pickup_landmark_id: Mapped[int | None] = mapped_column(
+        ForeignKey("ladnmarks.id", ondelete="SET NULL"), nullable=True
+    )
+
+    destination_town: Mapped[str | None] = mapped_column(String(250), nullable=True)
+    destination_town_id: Mapped[int | None] = mapped_column(
+        ForeignKey("towns.id", ondelete="SET NULL"), nullable=True
+    )
+
+    destination_district: Mapped[str | None] = mapped_column(String(250), nullable=True)
+    destination_district_id: Mapped[int | None] = mapped_column(
+        ForeignKey("districts.id", ondelete="SET NULL"), nullable=True
+    )
+
     destination_street: Mapped[str | None] = mapped_column(String(250), nullable=True)
     destination_street_id: Mapped[int | None] = mapped_column(
         ForeignKey("streets.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    destination_house: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    destination_house_id: Mapped[int | None] = mapped_column(
+        ForeignKey("houses.id", ondelete="SET NULL"), nullable=True
+    )
+    destination_landmark: Mapped[str | None] = mapped_column(String(250), nullable=True)
+    destination_landmark_id: Mapped[int | None] = mapped_column(
+        ForeignKey("ladnmarks.id", ondelete="SET NULL"), nullable=True
+    )
+
     passenger_name: Mapped[str | None] = mapped_column(
         String(100),
         nullable=True,
@@ -50,6 +92,19 @@ class Order(Base, TimestampMixin):
     version: Mapped[int] = mapped_column(nullable=False, default=1)
     idempotency_key: Mapped[str | None] = mapped_column(
         String(64), unique=True, nullable=True
+    )
+    waypoints: Mapped[list["Waypoint"]] = relationship(
+        "Waypoint", back_populates="order"
+    )
+    driver_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    driver_assigned_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    trip_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    trip_completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
 
     __mapper_args__ = {"version_id_col": version}
@@ -102,3 +157,34 @@ class Order(Base, TimestampMixin):
     def is_active(self) -> bool:
         """Заказ активен (не завершен и не отменен)"""
         return bool(self.state not in (OrderState.CANCELLED, OrderState.COMPLETED))
+
+
+class Waypoint(Base, TimestampMixin):
+    __tablename__ = "waypoints"
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    order_id: Mapped[UUID] = mapped_column(ForeignKey("orders.id", ondelete="CASCADE"))
+    order: Mapped["Order"] = relationship("Order", back_populates="waypoints")
+    sequence_number: Mapped[int] = mapped_column(nullable=False)
+    waypoint_town: Mapped[str | None] = mapped_column(String(250), nullable=True)
+    waypoint_town_id: Mapped[int | None] = mapped_column(
+        ForeignKey("towns.id", ondelete="SET NULL"), nullable=True
+    )
+
+    waypoint_district: Mapped[str | None] = mapped_column(String(250), nullable=True)
+    waypoint_district_id: Mapped[int | None] = mapped_column(
+        ForeignKey("districts.id", ondelete="SET NULL"), nullable=True
+    )
+
+    waypoint_street: Mapped[str | None] = mapped_column(String(250), nullable=True)
+    waypoint_street_id: Mapped[int | None] = mapped_column(
+        ForeignKey("streets.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    waypoint_house: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    waypoint_house_id: Mapped[int | None] = mapped_column(
+        ForeignKey("houses.id", ondelete="SET NULL"), nullable=True
+    )
+    waypoint_landmark: Mapped[str | None] = mapped_column(String(250), nullable=True)
+    waypoint_landmark_id: Mapped[int | None] = mapped_column(
+        ForeignKey("ladnmarks.id", ondelete="SET NULL"), nullable=True
+    )
