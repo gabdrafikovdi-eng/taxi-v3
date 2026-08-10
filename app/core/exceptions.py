@@ -36,6 +36,8 @@ class TooManyActiveOrdersError(DispatcherError):
     def __init__(self, max_allowed):
         self.max_allowed = max_allowed
         message = "Лимит активных заказов исчерпан"
+        if max_allowed:
+            message += f"Максимальное допустимо {max_allowed}"
         super().__init__(message, code="TOO_MANY_ACTIVE_ORDERS")
 
 

@@ -62,3 +62,6 @@ class OrderRepository:
         # Не делает commit — commit делает сервис.
         # Кто вызывает: OrderService.create_order.
         self.session.add(order)
+
+    async def commit(self) -> None:
+        await self.session.commit()
