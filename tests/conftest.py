@@ -16,7 +16,8 @@ os.environ.setdefault("OPENAI_MODEL", "test-model")
 
 import pytest
 
-from app.models.order import Order, OrderState
+from app.models.order import Order
+from app.models.order_state import OrderState
 
 
 @pytest.fixture

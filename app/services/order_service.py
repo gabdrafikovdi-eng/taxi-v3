@@ -10,5 +10,3 @@ class OrderService:
     async def create_order(self):
         ...
 
-
-        

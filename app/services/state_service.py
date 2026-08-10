@@ -1,6 +1,6 @@
 from app.core.exceptions import InvalidTransitionError
-from app.models.order import OrderState
 from app.models.order import Order
+from app.models.order_state import OrderState
 
 
 ALLOWED_TRANSITIONS: dict[OrderState, set[OrderState]] = {

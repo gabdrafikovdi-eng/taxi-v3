@@ -1,7 +1,7 @@
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from app.services.state_service import OrderState
+from app.models.order_state import OrderState
 
 
 class Settings(BaseSettings):
@@ -35,15 +35,8 @@ class Settings(BaseSettings):
     # Logger
     LOG_LEVEL: str = Field(default="INFO")
 
-    MAX_ACTIVE_ORDERS = 3  # Максимум активных заказов в одном звонке. Зачем: защита от бесконечного создания заказов LLM.
-    MAX_WAYPOINTS = 5  # Максимум промежуточных остановок в одном заказе. Зачем: защита от слишком длинных маршрутов.
-    ACTIVE_ORDER_STATES = (
-        OrderState.DRAFT,
-        OrderState.CONFIRMED,
-        OrderState.SEARCHING,
-        OrderState.ASSIGNED,
-        OrderState.IN_PROGRESS,
-    )  # Состояния, в которых заказ считается активным. Зачем: репозиторий использует для поиска активных заказов.
-
+    MAX_ACTIVE_ORDERS: int = 3  # Максимум активных заказов в одном звонке. Зачем: защита от бесконечного создания заказов LLM.
+    MAX_WAYPOINTS: int = 5  # Максимум промежуточных остановок в одном заказе. Зачем: защита от слишком длинных маршрутов.
+    
 
 config_settings = Settings()

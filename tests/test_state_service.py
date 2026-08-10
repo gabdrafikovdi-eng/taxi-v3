@@ -7,7 +7,8 @@
 import pytest
 
 from app.core.exceptions import InvalidTransitionError
-from app.models.order import Order, OrderState
+from app.models.order import Order
+from app.models.order_state import OrderState
 from app.services.state_service import StateService
 
 

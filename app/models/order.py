@@ -1,5 +1,4 @@
 from datetime import datetime
-from enum import StrEnum
 from uuid import UUID, uuid4
 
 
@@ -7,16 +6,7 @@ from sqlalchemy import DateTime, ForeignKey, String, Enum, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base, TimestampMixin
-
-
-class OrderState(StrEnum):
-    DRAFT = "draft"  # Заказ в процессе сбора данных
-    CONFIRMED = "confirmed"  # Пользователь подтвердил
-    SEARCHING = "searghing"  # Поиск водителя
-    ASSIGNED = "assigned"  # Водитель назначен
-    IN_PROGRESS = "in_progress"  # В процессе выполнения
-    COMPLETED = "completed"  # Заказ завершён успешно
-    CANCELLED = "cancelled"  # Заказ отменён
+from app.models.order_state import OrderState
 
 
 class Order(Base, TimestampMixin):
@@ -46,7 +36,7 @@ class Order(Base, TimestampMixin):
     )
     pickup_landmark: Mapped[str | None] = mapped_column(String(250), nullable=True)
     pickup_landmark_id: Mapped[int | None] = mapped_column(
-        ForeignKey("ladnmarks.id", ondelete="SET NULL"), nullable=True
+        ForeignKey("landmarks.id", ondelete="SET NULL"), nullable=True
     )
 
     destination_town: Mapped[str | None] = mapped_column(String(250), nullable=True)
@@ -69,7 +59,7 @@ class Order(Base, TimestampMixin):
     )
     destination_landmark: Mapped[str | None] = mapped_column(String(250), nullable=True)
     destination_landmark_id: Mapped[int | None] = mapped_column(
-        ForeignKey("ladnmarks.id", ondelete="SET NULL"), nullable=True
+        ForeignKey("landmarks.id", ondelete="SET NULL"), nullable=True
     )
 
     passenger_name: Mapped[str | None] = mapped_column(
@@ -186,5 +176,5 @@ class Waypoint(Base, TimestampMixin):
     )
     waypoint_landmark: Mapped[str | None] = mapped_column(String(250), nullable=True)
     waypoint_landmark_id: Mapped[int | None] = mapped_column(
-        ForeignKey("ladnmarks.id", ondelete="SET NULL"), nullable=True
+        ForeignKey("landmarks.id", ondelete="SET NULL"), nullable=True
     )
