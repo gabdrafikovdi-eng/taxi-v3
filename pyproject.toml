@@ -20,8 +20,14 @@ ignore = ["I001"]
 dev = [
     "pytest>=9.1.1",
     "openai>=1.0.0",
+    "pytest-asyncio>=1.4.0",
 ]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+# Общий event loop на всю сессию: глобальный async engine (asyncpg) не должен
+# переживать смену циклов между тестами, иначе соединения из пула становятся
+# невалидными ("cannot perform operation: another operation is in progress").
+asyncio_default_test_loop_scope = "session"
+asyncio_default_fixture_loop_scope = "session"

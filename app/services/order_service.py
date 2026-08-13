@@ -1,10 +1,16 @@
 from uuid import UUID
 
 from app.core.database import config_settings
-from app.core.exceptions import InvalidStateError, OrderNotFoundError, TooManyActiveOrdersError
+from app.core.exceptions import (
+    InvalidStateError,
+    OrderNotFoundError,
+    TooManyActiveOrdersError,
+)
 from app.models.order import Order
 from app.models.order_state import ACTIVE_ORDER_STATES, OrderState
 from app.repositories.order_repo import OrderRepository
+from app.schemas.address import AddressInput, AddressStatus
+from app.services.address_service import AddressService
 from app.services.state_service import StateService
 
 
@@ -12,7 +18,7 @@ class OrderService:
     def __init__(
         self,
         state_service: StateService,
-        address_service,
+        address_service: AddressService,
         calculate_service,
         order_repo: OrderRepository,
     ):
@@ -40,15 +46,20 @@ class OrderService:
         await self.order_repo.add(order)
         await self.order_repo.commit()
 
-    async def set_pickup(self, order_id: UUID, address_data) -> Order:
+    async def set_pickup(self, order_id: UUID, address_data: AddressInput) -> Order:
         order = await self.order_repo.get_by_id(order_id=order_id)
         if order is None:
             raise OrderNotFoundError(order_id=order_id)
 
         if order.state != OrderState.DRAFT:
             raise InvalidStateError(order_id=order_id)
+        address_result = await self.address_service.resolve_address(address_data)
 
+        if address_result.status == AddressStatus.NOT_FOUND:
+            
         
+
+
 """class OrderService:
 
     Конструктор принимает:

@@ -1,50 +1,105 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_
+from sqlalchemy import func, select, or_
 from sqlalchemy.orm import selectinload
-from app.models.address import Street, StreetSynonym, House, District, Town
+from app.models.address import Landmark, Street, StreetSynonym, House, District, Town
 
 
 class AddressRepository:
-    """
-    Мок-реализация AddressRepository для разработки и тестов.
-    Предоставляет методы для поиска улиц, синонимов, домов и загрузки с районами.
-    """
+    def __init__(self, session: AsyncSession):
+        self.session = session
 
-    async def find_street_by_name(self, session: AsyncSession, name: str) -> list[Street]:
-        """Найти улицу по названию (частичное совпадение без учёта регистра)."""
-        stmt = select(Street).where(Street.name.ilike(f"%{name}%"))
-        result = await session.execute(stmt)
+    async def get_town_by_name(self, name: str) -> Town | None:
+        stmt = select(Town).where(func.lower(Town.name) == name.lower())
+        result = await self.session.execute(stmt)
+
+        return result.scalar_one_or_none()
+       
+
+
+    async def get_district_by_name(self, town_id: int, name: str) -> District | None:
+        stmt = select(District).where(
+            func.lower(District.name) == name.lower(),
+            District.town_id == town_id,
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+        
+    async def find_streets_exact(
+        self, districts_ids: list[int], name: str
+    ) -> list[Street]:
+        stmt = (
+            select(Street)
+            .where(
+                Street.district_id.in_(districts_ids),
+                func.lower(Street.name) == name.lower(),
+            )
+            .options(selectinload(Street.district).selectinload(District.town))
+        )
+        result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
-    async def find_street_by_synonym(self, session: AsyncSession, name: str) -> Street | None:
-        """Найти улицу по синониму (например, 'больница' -> street_id)."""
+        
+    async def find_streets_by_synonyms(
+        self, districts_ids: list[int], name: str
+    ) -> list[Street]:
         stmt = (
             select(Street)
             .join(StreetSynonym, Street.id == StreetSynonym.street_id)
-            .where(StreetSynonym.name.ilike(f"%{name}%"))
+            .where(
+                Street.district_id.in_(districts_ids),
+                func.lower(StreetSynonym.name) == name.lower(),
+            )
+            .options(selectinload(Street.district).selectinload(District.town))
         )
-        result = await session.execute(stmt)
-        return result.scalars().first()
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
 
-    async def get_street_with_district(self, session: AsyncSession, street_id: int) -> Street | None:
-        """Загрузить улицу с районом и городом для расчёта цены."""
+    async def find_street_fuzzy(
+        self, district_ids: list[int], name: str, threshold: float, limit: int
+    ) -> list[Street]:
         stmt = (
             select(Street)
-            .options(
-                selectinload(Street.district).selectinload(District.town)
+            .where(
+                Street.district_id.in_(district_ids),
+                func.similarity(Street.name, name) >= threshold,
             )
-            .where(Street.id == street_id)
+            .order_by(func.similarity(Street.name, name).desc())
+            .limit(limit)
+            .options(selectinload(Street.district).selectinload(District.town))
         )
-        result = await session.execute(stmt)
-        return result.scalars().first()
+        result = await self.session.execute(stmt)
 
-    async def find_house_by_street_and_number(
-        self, session: AsyncSession, street_id: int, number: str
-    ) -> House | None:
-        """Найти конкретный дом по ID улицы и номеру."""
-        stmt = select(House).where(
-            House.street_id == street_id,
-            House.number.ilike(number)
+        return list(result.scalars().all())
+
+    async def find_house(self, street_id: int, number: str) -> House | None:
+        stmt = select(House).where(House.street_id == street_id, House.number == number)
+        result = await self.session.execute(stmt)
+
+        return result.scalar_one_or_none()
+
+    async def find_landmarks(
+        self, district_ids: list[int], name: str
+    ) -> list[Landmark]:
+        stmt = (
+            select(Landmark)
+            .join(Street, Landmark.street_id == Street.id)
+            .where(
+                Street.district_id.in_(district_ids),
+                Landmark.name.ilike(f"%{name}%"),
+            )
+            .options(
+                selectinload(Landmark.street)
+                .selectinload(Street.district)
+                .selectinload(District.town),
+                selectinload(Landmark.house),
+            )
         )
-        result = await session.execute(stmt)
-        return result.scalars().first()
+        result = await self.session.execute(stmt)
+
+        return list(result.scalars().all())
+
+    async def get_district_ids_by_town(self, town_id: int) -> list[int]:
+        stmt = select(District.id).where(District.town_id == town_id)
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all())
