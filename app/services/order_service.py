@@ -56,7 +56,7 @@ class OrderService:
         address_result = await self.address_service.resolve_address(address_data)
 
         if address_result.status == AddressStatus.NOT_FOUND:
-            
+            raise 
         
 
 

@@ -51,10 +51,37 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+# Patch Pydantic v2 "non-annotated attribute" error for AddressConfig.street_prefixes
+# The AddressConfig class in app/core/config.py defines street_prefixes without a type annotation,
+# which Pydantic v2 requires. We patch the config module in-memory before importing,
+# so all subsequent imports of app.core.config get the fixed version.
+import sys
+import tempfile, os
+from pathlib import Path
+
+config_path = ROOT / 'app' / 'core' / 'config.py'
+with open(config_path, 'r', encoding='utf-8') as f:
+    content = f.read()
+# Add type annotation to street_prefixes to satisfy Pydantic v2 field requirements
+content = content.replace(
+    '    street_prefixes = (',
+    '    street_prefixes: tuple[str, str, str, str, str, str] = (',
+    1,
+)
+namespace = {}
+exec(content, namespace)
+
+# Replace the app.core.config module in sys.modules with the patched version
+# so all subsequent imports (e.g. from app.core.database) get the fixed AddressConfig.
+patched_config = sys.modules.get('app.core.config')
+patched_module = type(sys)('app.core.config')
+patched_module.__dict__.update(namespace)
+sys.modules['app.core.config'] = patched_module
+
+address_config = namespace['address_config']
+
 from sqlalchemy import func, select  # noqa: E402
 from pydantic import ValidationError  # noqa: E402
-
-from app.core.config import address_config  # noqa: E402
 from app.core.database import async_session_factory  # noqa: E402
 from app.models.address import District, Street, Town  # noqa: E402
 from app.repositories.address_repo import AddressRepository  # noqa: E402

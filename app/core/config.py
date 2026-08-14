@@ -50,7 +50,6 @@ class AddressConfig(BaseModel):
     min_resolve_score: float = 0.9
     max_exact_variants: int = 3
 
-
     weights: dict[str, float] = {
         "exact": 1.0,
         "synonym": 0.9,
@@ -60,5 +59,15 @@ class AddressConfig(BaseModel):
         "house_match_bonus": 0.2,
         "landmark_house_bonus": 0.15,
     }
+
+    street_prefixes: tuple[str] = (
+        "ул",
+        "улица",
+        "пер",
+        "переулок",
+        "пр",
+        "проспект",
+    )
+
 
 address_config = AddressConfig()
