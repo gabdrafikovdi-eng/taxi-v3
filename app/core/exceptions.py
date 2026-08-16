@@ -1,3 +1,6 @@
+from app.schemas.address import AddressCandidate, AddressStatus
+
+
 class DispatcherError(Exception):
     def __init__(self, message: str, *, code: str | None = None):
         self.message = message
@@ -72,3 +75,34 @@ class PricingError(DispatcherError):
         if reason is not None:
             message += f" reason - {reason}"
         super().__init__(message, code="PRICING_ERROR")
+
+
+class AddressResolveError(DispatcherError):
+    """Выбрасывается, когда адрес не может быть однозначно разрешён."""
+
+    def __init__(
+        self,
+        message: str | None = None,
+        *,
+        status: AddressStatus,
+        candidates: list[AddressCandidate] | None = None,
+    ):
+        self.message = message or self._default_message()
+        self.status = status
+        self.candidates = candidates or []
+
+        code = (
+            "ADDRESS_NOT_FOUND"
+            if self.status == AddressStatus.NOT_FOUND
+            else "ADDRESS_AMBIGUOUS"
+        )
+
+        super().__init__(self.message, code=code)
+
+    def _default_message(self) -> str:
+        if self.status == AddressStatus.NOT_FOUND:
+            return "Адрес не найден"
+        if self.status == AddressStatus.AMBIGUOUS:
+            return "Найдено несколько вариантов адресов. Уточните"
+
+        return "Ошибка разрешения адреса"

@@ -2,6 +2,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio.session import AsyncSession
 from sqlalchemy import or_, select
+from sqlalchemy.orm import selectinload
 
 
 from app.models.call_session import CallSession
@@ -16,7 +17,11 @@ class OrderRepository:
     async def get_by_id(self, order_id: UUID) -> Order | None:
         # Зачем: загрузить заказ перед любым изменением.
         # Кто вызывает: OrderService.set_pickup, confirm_order, cancel_order.
-        query = select(Order).where(Order.id == order_id)
+        query = (
+            select(Order)
+            .where(Order.id == order_id)
+            .options(selectinload(Order.waypoints))
+        )
         result = await self.session.execute(query)
         return result.scalar_one_or_none()
 
@@ -65,3 +70,9 @@ class OrderRepository:
 
     async def commit(self) -> None:
         await self.session.commit()
+
+    async def refresh(self) -> None:
+        await self.session.refresh()
+
+    async def rollback(self) -> None:
+        await self.session.rollback()

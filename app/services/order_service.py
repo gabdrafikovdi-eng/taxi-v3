@@ -1,17 +1,24 @@
+import asyncio
+from typing import Any
 from uuid import UUID
 
 from app.core.database import config_settings
 from app.core.exceptions import (
+    AddressResolveError,
     InvalidStateError,
     OrderNotFoundError,
+    PricingError,
     TooManyActiveOrdersError,
 )
 from app.models.order import Order
 from app.models.order_state import ACTIVE_ORDER_STATES, OrderState
 from app.repositories.order_repo import OrderRepository
-from app.schemas.address import AddressInput, AddressStatus
+from app.schemas.address import AddressCandidate, AddressInput, AddressStatus
 from app.services.address_service import AddressService
+from app.services.pricing_service import PricingService
 from app.services.state_service import StateService
+
+from sqlalchemy.orm.exc import StaleDataError
 
 
 class OrderService:
@@ -19,12 +26,12 @@ class OrderService:
         self,
         state_service: StateService,
         address_service: AddressService,
-        calculate_service,
+        pricing_service: PricingService,
         order_repo: OrderRepository,
     ):
         self.state_service = state_service
         self.address_service = address_service
-        self.calculate_service = calculate_service
+        self.pricing_service = pricing_service
         self.order_repo = order_repo
 
     async def create_order(self, call_session_id: UUID, idempotency_key: str) -> Order:
@@ -44,7 +51,9 @@ class OrderService:
 
         order = Order(call_session_id=call_session_id, idempotency_key=idempotency_key)
         await self.order_repo.add(order)
+
         await self.order_repo.commit()
+        return order
 
     async def set_pickup(self, order_id: UUID, address_data: AddressInput) -> Order:
         order = await self.order_repo.get_by_id(order_id=order_id)
@@ -52,12 +61,203 @@ class OrderService:
             raise OrderNotFoundError(order_id=order_id)
 
         if order.state != OrderState.DRAFT:
-            raise InvalidStateError(order_id=order_id)
+            raise InvalidStateError(
+                order_id=order_id,
+                current_state=order.state,
+                attemted_action="set_pickup",
+            )
         address_result = await self.address_service.resolve_address(address_data)
 
-        if address_result.status == AddressStatus.NOT_FOUND:
-            raise 
-        
+        match address_result.status:
+            case AddressStatus.NOT_FOUND:
+                raise AddressResolveError(
+                    status=AddressStatus.NOT_FOUND,
+                    message="Не удалось найти указаный адрес",
+                )
+
+            case AddressStatus.AMBIGUOUS:
+                raise AddressResolveError(
+                    status=AddressStatus.AMBIGUOUS,
+                    message="Найдено несколько вариантов. Выберите один из предложенных",
+                    candidates=address_result.candidates,
+                )
+            case AddressStatus.INCOMPLETE:
+                raise AddressResolveError(
+                    status=AddressStatus.INCOMPLETE,
+                    message="Для установки адреса требуется пара street+house или landmark",
+                )
+
+            case AddressStatus.RESOLVED:
+                candidate = address_result.candidates[0]
+
+        max_retries = 3
+
+        for attempt in range(max_retries):
+            try:
+                order = await self.order_repo.get_by_id(order_id)
+
+                if order is None:
+                    raise OrderNotFoundError(order_id=order_id)
+
+                if order.state != OrderState.DRAFT:
+                    raise InvalidStateError(
+                        order_id=order_id,
+                        current_state=order.state,
+                        attemted_action="set_pickup",
+                    )
+
+                if self._is_same_address(
+                    target=order, candidate=candidate, prefix="pickup"
+                ):
+                    return order
+
+                self._apply_address_candidate(
+                    target=order, candidate=candidate, prefix="pickup"
+                )
+                order.price = None
+
+                if order.has_both_addresses:
+                    price = await self.pricing_service.calculate(order)
+
+                    if price is None:
+                        raise PricingError(
+                            reason="Не удалось рассчитать стоимость поедзки"
+                        )
+
+                    order.price = price
+
+                await self.order_repo.commit()
+                return order
+
+            except StaleDataError:
+                await self.order_repo.rollback()
+                if attempt == max_retries - 1:
+                    raise  # TODO или выбросить специализированное исключение
+
+                await asyncio.sleep(0.3)
+
+        raise RuntimeError("Не удалось выполнить операцию из-за конфликтов")
+
+    async def set_destination(
+        self, order_id: UUID, address_data: AddressInput
+    ) -> Order:
+        order = await self.order_repo.get_by_id(order_id=order_id)
+        if order is None:
+            raise OrderNotFoundError(order_id=order_id)
+
+        if order.state != OrderState.DRAFT:
+            raise InvalidStateError(
+                order_id=order_id,
+                current_state=order.state,
+                attemted_action="set_destination",
+            )
+        address_result = await self.address_service.resolve_address(address_data)
+
+        match address_result.status:
+            case AddressStatus.NOT_FOUND:
+                raise AddressResolveError(
+                    status=AddressStatus.NOT_FOUND,
+                    message="Не удалось найти указаный адрес",
+                )
+
+            case AddressStatus.AMBIGUOUS:
+                raise AddressResolveError(
+                    status=AddressStatus.AMBIGUOUS,
+                    message="Найдено несколько вариантов. Выберите один из предложенных",
+                    candidates=address_result.candidates,
+                )
+            case AddressStatus.INCOMPLETE:
+                raise AddressResolveError(
+                    status=AddressStatus.INCOMPLETE,
+                    message="Для установки адреса требуется пара street+house или landmark",
+                )
+
+            case AddressStatus.RESOLVED:
+                candidate = address_result.candidates[0]
+
+        max_retries = 3
+
+        for attempt in range(max_retries):
+            try:
+                order = await self.order_repo.get_by_id(order_id)
+
+                if order is None:
+                    raise OrderNotFoundError(order_id=order_id)
+
+                if order.state != OrderState.DRAFT:
+                    raise InvalidStateError(
+                        order_id=order_id,
+                        current_state=order.state,
+                        attemted_action="set_destination",
+                    )
+
+                if self._is_same_address(
+                    target=order, candidate=candidate, prefix="destination"
+                ):
+                    return order
+
+                self._apply_address_candidate(
+                    target=order, candidate=candidate, prefix="destination"
+                )
+                order.price = None
+
+                if order.has_both_addresses:
+                    price = await self.pricing_service.calculate(order)
+
+                    if price is None:
+                        raise PricingError(
+                            reason="Не удалось рассчитать стоимость поедзки"
+                        )
+
+                    order.price = price
+
+                await self.order_repo.commit()
+                return order
+
+            except StaleDataError:
+                await self.order_repo.rollback()
+                if attempt == max_retries - 1:
+                    raise  # TODO или выбросить специализированное исключение
+
+                await asyncio.sleep(0.3)
+
+        raise RuntimeError("Не удалось выполнить операцию из-за конфликтов")
+
+    def _is_same_address(
+        self, target: Any, candidate: AddressCandidate, prefix: str
+    ) -> bool:
+
+        field_map = {
+            "town_id": candidate.town_id,
+            "district_id": candidate.district_id,
+            "street_id": candidate.street_id,
+            "house_id": candidate.house_id,
+            "landmark_id": candidate.landmark_id,
+        }
+        for suffix, value in field_map.items():
+            if getattr(target, f"{prefix}_{suffix}") != value:
+                return False
+
+        return True
+
+    def _apply_address_candidate(
+        self, target: Any, candidate: AddressCandidate, prefix: str
+    ) -> None:
+        """Заполняет поля target с префиксом prefix данными из candidate."""
+        field_map = {
+            "town": candidate.town_name,
+            "town_id": candidate.town_id,
+            "district": candidate.district_name,
+            "district_id": candidate.district_id,
+            "street": candidate.street_name,
+            "street_id": candidate.street_id,
+            "house": candidate.house_number,
+            "house_id": candidate.house_id,
+            "landmark": candidate.landmark_name,
+            "landmark_id": candidate.landmark_id,
+        }
+        for suffix, value in field_map.items():
+            setattr(target, f"{prefix}_{suffix}", value)
 
 
 """class OrderService:

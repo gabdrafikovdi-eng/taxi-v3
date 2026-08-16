@@ -29,6 +29,7 @@ class AddressStatus(StrEnum):
     RESOLVED = "resolved"  # Нашли 1 уверенный вариант -> оформляем
     AMBIGUOUS = "ambiguous"  # Нашли 2-3 варианта -> LLM задает уточняющий вопрос
     NOT_FOUND = "not_found"  # Ничего не нашли -> просим переназват
+    INCOMPLETE = "incomplete"  # Не заполнен address + house or landmark
 
 
 class AddressCandidate(BaseModel):
@@ -74,3 +75,9 @@ class MatchType(StrEnum):
     FUZZY = "fuzzy"
     LANDMARK = "landmark"
 
+
+class PricingAddress(BaseModel):
+    town_base_price: int | None = None
+    district_price: int | None = None
+    street_price: int | None = None
+    house_price: int | None = None

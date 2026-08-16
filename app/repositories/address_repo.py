@@ -2,6 +2,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 from app.models.address import Landmark, Street, StreetSynonym, House, District, Town
+from app.schemas.address import PricingAddress
 
 
 class AddressRepository:
@@ -121,3 +122,39 @@ class AddressRepository:
         stmt = select(District.id).where(District.town_id == town_id)
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
+
+    async def get_pricing_address(
+        self, town_id: int, district_id: int, street_id: int, house_id: int | None
+    ) -> PricingAddress | None:
+        stmt = (
+            select(
+                Town.base_price.label("town_base_price"),
+                District.price_override.label("district_price"),
+                Street.price_override.label("street_price"),
+                House.price_override.label("house_price"),
+            )
+            .select_from(Town)
+            .join(District, District.town_id == Town.id)
+            .join(Street, Street.district_id == District.id)
+            .join(House, House.street_id == Street.id)
+            .where(
+                Town.id == town_id,
+                District.id == district_id,
+                Street.id == street_id,
+            )
+        )
+        if house_id is not None:
+            stmt = stmt.where(House.id == house_id)
+
+        result = await self.session.execute(stmt)
+        row = result.one_or_none()
+
+        if row is None:
+            return None
+
+        return PricingAddress(
+            town_base_price=row.town_base_price,
+            district_price=row.district_price,
+            street_price=row.street_price,
+            house_price=row.house_price,
+        )

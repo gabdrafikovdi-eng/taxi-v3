@@ -1,6 +1,7 @@
 import re
 from typing import Any
 
+from app.core.exceptions import AddressResolveError
 from app.models.address import Street, Town
 from app.repositories.address_repo import AddressRepository
 from app.core.config import address_config
@@ -27,6 +28,11 @@ class AddressService:
 
     async def resolve_address(self, input_address: AddressInput) -> AddressMatchResult:
         input_data: NormalizedAddressInput = self._normalize_input(input_address)
+
+        if not ((input_data.street and input_data.house) or input_data.landmark):
+            return AddressMatchResult(
+                status=AddressStatus.INCOMPLETE, reason="street_and_house_or_landmark"
+            )
 
         town_name = input_data.town or self.address_config.default_town_name
 

@@ -27,6 +27,8 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 from uuid import UUID, uuid4
 
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+
 from openai import AsyncOpenAI
 
 # ---------------------------------------------------------------------------
@@ -139,14 +141,156 @@ def record_tool_call(
         state.errors.append(f"{name}: {result.get('message', 'ошибка')}")
 
 
-# Тип обработчика tool: (arguments, state) -> dict
-ToolHandler = Callable[[dict, InMemoryState], Awaitable[dict]]
+# Тип обработчика tool: (валидированная Pydantic-модель аргументов, state) -> dict
+ToolHandler = Callable[[BaseModel, InMemoryState], Awaitable[dict]]
+
+
+# ---------------------------------------------------------------------------
+# Pydantic-схемы аргументов tools
+#   LLM при вызове функции заполняет JSON, который проходит валидацию через
+#   соответствующую Pydantic-модель. JSON-схема для tools генерируется из этих
+#   же моделей (model_json_schema()), так что контракт единый.
+# ---------------------------------------------------------------------------
+class AddressFields(BaseModel):
+    """
+    Общие поля адреса для tools установки адресов.
+
+    Business-правила (проверяются автоматически при создании модели через
+    @model_validator, т.е. в момент AddressInput(**arguments) от LLM):
+      * street и house указываются ТОЛЬКО вместе;
+      * должен быть задан либо набор street+house, либо ориентир landmark.
+    Нарушение правил выбрасывает ValidationError, который перехватывается в
+    process_user_message и возвращается LLM как результат инструмента с ошибкой.
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    street: str | None = Field(
+        default=None,
+        description=(
+            "Улица. Если указана — обязательно нужно указать и house. "
+            "ЛИБО используй только landmark."
+        ),
+    )
+    house: str | None = Field(
+        default=None,
+        description="Номер дома. Обязателен, если указана street.",
+    )
+    landmark: str | None = Field(
+        default=None,
+        description=(
+            "Ориентир (напр. «больница», «магазин»). Указывай ТОЛЬКО landmark "
+            "ВМЕСТО пары street+house, не вместе с ними."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def check_address(self) -> "AddressFields":
+        # Если указана улица или дом, то должны быть указаны оба
+        if (self.street is not None) != (self.house is not None):
+            raise ValueError(
+                "Если указывается улица или дом, необходимо указать оба поля: "
+                "street и house"
+            )
+        # Если ни улица, ни дом, ни ориентир не указаны — адрес пустой
+        if self.street is None and self.house is None and self.landmark is None:
+            raise ValueError(
+                "Необходимо указать либо улицу и номер дома (street+house), "
+                "либо ориентир (landmark)"
+            )
+        return self
+
+
+class OrderIdField(BaseModel):
+    """Поле order_id для tools варианта A."""
+
+    order_id: UUID = Field(..., description="ID заказа, полученный из create_order")
+
+
+# --- Вариант A: все tools требуют order_id ---
+class CreateOrderInput(BaseModel):
+    """create_order(): аргументов нет."""
+
+    pass
+
+
+class SetPickupAddressInputA(AddressFields, OrderIdField):
+    """set_pickup_address(order_id, street, house?, landmark?)."""
+
+    pass
+
+
+class SetDestinationAddressInputA(AddressFields, OrderIdField):
+    """set_destination_address(order_id, street, house?, landmark?)."""
+
+    pass
+
+
+class SetWaypointAddressInputA(AddressFields, OrderIdField):
+    """set_waypoint_address(order_id, street, house?, landmark?)."""
+
+    pass
+
+
+class ConfirmOrderInputA(OrderIdField):
+    """confirm_order(order_id)."""
+
+    pass
+
+
+class CancelOrderInputA(OrderIdField):
+    """cancel_order(order_id)."""
+
+    pass
+
+
+# --- Вариант B: без order_id (автоматическое создание DRAFT) ---
+class SetPickupAddressInputB(AddressFields):
+    """set_pickup_address(street, house?, landmark?)."""
+
+    pass
+
+
+class SetDestinationAddressInputB(AddressFields):
+    """set_destination_address(street, house?, landmark?)."""
+
+    pass
+
+
+class ConfirmOrderInputB(BaseModel):
+    """confirm_order(): аргументов нет."""
+
+    pass
+
+
+class CancelOrderInputB(BaseModel):
+    """cancel_order(): аргументов нет."""
+
+    pass
+
+
+class StartNewOrderInputB(BaseModel):
+    """start_new_order(): аргументов нет."""
+
+    pass
+
+
+def _tool_spec(name: str, description: str, model: type[BaseModel]) -> dict:
+    """Строит OpenAI tool-spec из Pydantic-модели аргументов."""
+    return {
+        "type": "function",
+        "function": {
+            "name": name,
+            "description": description,
+            "parameters": model.model_json_schema(),
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
 # Вариант A: Отдельный tool create_order
 # ---------------------------------------------------------------------------
-async def handle_create_order_a(arguments: dict, state: InMemoryState) -> dict:
+async def handle_create_order_a(_args: CreateOrderInput, state: InMemoryState) -> dict:
     """create_order() — создаёт новый DRAFT и возвращает order_id."""
     order = InMemoryOrder(id=uuid4(), state="draft")
     state.orders.append(order)
@@ -158,16 +302,16 @@ async def handle_create_order_a(arguments: dict, state: InMemoryState) -> dict:
     }
 
 
-async def handle_set_pickup_a(arguments: dict, state: InMemoryState) -> dict:
+async def handle_set_pickup_a(args: SetPickupAddressInputA, state: InMemoryState) -> dict:
     """set_pickup_address(order_id, street, house?, landmark?)."""
-    order = _resolve_order_a(arguments, state)
+    order = _resolve_order_a(args, state)
     if order is None:
         return {
             "status": "error",
             "message": "Сначала создайте заказ — вызовите create_order",
         }
 
-    order.pickup = _format_address(arguments)
+    order.pickup = _format_address(args)
     return {
         "status": "success",
         "message": f"Адрес подачи установлен: {order.pickup}",
@@ -175,16 +319,18 @@ async def handle_set_pickup_a(arguments: dict, state: InMemoryState) -> dict:
     }
 
 
-async def handle_set_destination_a(arguments: dict, state: InMemoryState) -> dict:
+async def handle_set_destination_a(
+    args: SetDestinationAddressInputA, state: InMemoryState
+) -> dict:
     """set_destination_address(order_id, street, house?, landmark?)."""
-    order = _resolve_order_a(arguments, state)
+    order = _resolve_order_a(args, state)
     if order is None:
         return {
             "status": "error",
             "message": "Сначала создайте заказ — вызовите create_order",
         }
 
-    order.destination = _format_address(arguments)
+    order.destination = _format_address(args)
     return {
         "status": "success",
         "message": f"Адрес назначения установлен: {order.destination}",
@@ -192,15 +338,15 @@ async def handle_set_destination_a(arguments: dict, state: InMemoryState) -> dic
     }
 
 
-async def handle_set_waypoint(argument: dict, state: InMemoryState) -> dict:
+async def handle_set_waypoint(args: SetWaypointAddressInputA, state: InMemoryState) -> dict:
     """set_waypoint_address(order_id, street, house?, landmark?)."""
-    order = _resolve_order_a(argument, state)
+    order = _resolve_order_a(args, state)
     if order is None:
         return {
             "status": "error",
             "message": "Сначала создайте заказ — вызовите create_order",
         }
-    order.waypoint = _format_address(argument)
+    order.waypoint = _format_address(args)
     return {
         "status": "success",
         "message": f"Адрес назначения установлен: {order.waypoint}",
@@ -208,9 +354,9 @@ async def handle_set_waypoint(argument: dict, state: InMemoryState) -> dict:
     }
 
 
-async def handle_confirm_order_a(arguments: dict, state: InMemoryState) -> dict:
+async def handle_confirm_order_a(args: ConfirmOrderInputA, state: InMemoryState) -> dict:
     """confirm_order(order_id) — подтверждает заказ."""
-    order = _resolve_order_a(arguments, state)
+    order = _resolve_order_a(args, state)
     if order is None:
         return {
             "status": "error",
@@ -232,9 +378,9 @@ async def handle_confirm_order_a(arguments: dict, state: InMemoryState) -> dict:
     }
 
 
-async def handle_cancel_order_a(arguments: dict, state: InMemoryState) -> dict:
+async def handle_cancel_order_a(args: CancelOrderInputA, state: InMemoryState) -> dict:
     """cancel_order(order_id) — отменяет заказ."""
-    order = _resolve_order_a(arguments, state)
+    order = _resolve_order_a(args, state)
     if order is None:
         return {
             "status": "error",
@@ -249,15 +395,9 @@ async def handle_cancel_order_a(arguments: dict, state: InMemoryState) -> dict:
     }
 
 
-def _resolve_order_a(arguments: dict, state: InMemoryState) -> InMemoryOrder | None:
+def _resolve_order_a(args: OrderIdField, state: InMemoryState) -> InMemoryOrder | None:
     """Достаёт заказ по order_id (Вариант A). Возвращает None, если заказа нет."""
-    order_id = arguments.get("order_id")
-    if not order_id:
-        return None
-    try:
-        return get_order_by_id(state, UUID(order_id))
-    except ValueError:
-        return None
+    return get_order_by_id(state, args.order_id)
 
 
 # ---------------------------------------------------------------------------
@@ -276,10 +416,10 @@ def ensure_active_order(state: InMemoryState) -> InMemoryOrder:
     return order
 
 
-async def handle_set_pickup_b(arguments: dict, state: InMemoryState) -> dict:
+async def handle_set_pickup_b(args: SetPickupAddressInputB, state: InMemoryState) -> dict:
     """set_pickup_address(street, house?, landmark?) — без order_id."""
     order = ensure_active_order(state)
-    order.pickup = _format_address(arguments)
+    order.pickup = _format_address(args)
     return {
         "status": "success",
         "message": f"Адрес подачи установлен: {order.pickup}",
@@ -287,10 +427,12 @@ async def handle_set_pickup_b(arguments: dict, state: InMemoryState) -> dict:
     }
 
 
-async def handle_set_destination_b(arguments: dict, state: InMemoryState) -> dict:
+async def handle_set_destination_b(
+    args: SetDestinationAddressInputB, state: InMemoryState
+) -> dict:
     """set_destination_address(street, house?, landmark?) — без order_id."""
     order = ensure_active_order(state)
-    order.destination = _format_address(arguments)
+    order.destination = _format_address(args)
     return {
         "status": "success",
         "message": f"Адрес назначения установлен: {order.destination}",
@@ -298,7 +440,7 @@ async def handle_set_destination_b(arguments: dict, state: InMemoryState) -> dic
     }
 
 
-async def handle_confirm_order_b(arguments: dict, state: InMemoryState) -> dict:
+async def handle_confirm_order_b(_args: ConfirmOrderInputB, state: InMemoryState) -> dict:
     """confirm_order() — подтверждает текущий активный заказ."""
     order = get_active_order(state)
     if order is None:
@@ -318,7 +460,7 @@ async def handle_confirm_order_b(arguments: dict, state: InMemoryState) -> dict:
     }
 
 
-async def handle_cancel_order_b(arguments: dict, state: InMemoryState) -> dict:
+async def handle_cancel_order_b(_args: CancelOrderInputB, state: InMemoryState) -> dict:
     """cancel_order() — отменяет текущий активный заказ."""
     order = get_active_order(state)
     if order is None:
@@ -332,7 +474,7 @@ async def handle_cancel_order_b(arguments: dict, state: InMemoryState) -> dict:
     }
 
 
-async def handle_start_new_order_b(arguments: dict, state: InMemoryState) -> dict:
+async def handle_start_new_order_b(_args: StartNewOrderInputB, state: InMemoryState) -> dict:
     """start_new_order() — создаёт новый DRAFT (для мульти-заказов)."""
     order = InMemoryOrder(id=uuid4(), state="draft")
     state.orders.append(order)
@@ -347,13 +489,9 @@ async def handle_start_new_order_b(arguments: dict, state: InMemoryState) -> dic
 # ---------------------------------------------------------------------------
 # Общие утилиты
 # ---------------------------------------------------------------------------
-def _format_address(arguments: dict) -> str:
+def _format_address(addr: AddressFields) -> str:
     """Собирает адрес из street/house/landmark."""
-    street = arguments.get("street", "")
-    house = arguments.get("house", "")
-    landmark = arguments.get("landmark", "")
-    # Собираем части адреса, пропуская пустые
-    parts = [p for p in (street, house, landmark) if p]
+    parts = [p for p in (addr.street, addr.house, addr.landmark) if p]
     return " ".join(parts).strip()
 
 
@@ -376,6 +514,10 @@ SYSTEM_PROMPT_A = """Ты — диспетчер такси. Помоги пол
 3. Когда оба адреса установлены, спроси подтверждение
 4. При подтверждении вызови confirm_order
 5. Для нового заказа вызови create_order ещё раз
+6. Адрес передавай ЛИБО парой «street»+«house» одновременно, ЛИБО только
+   «landmark» (ориентир), но НИКОГДА не оба варианта сразу.
+7. НИКОГДА не выдумывай номер дома или ориентир. Если пользователь не назвал
+   номер дома или ориентир — переспроси его, не придумывай данные сам.
 ### Справочник улиц Аскарово
 
 Используй этот список для нормализации названий улиц.
@@ -495,6 +637,10 @@ SYSTEM_PROMPT_B = """Ты — диспетчер такси. Помоги пол
 4. При подтверждении вызови confirm_order
 5. Если пользователь хочет ещё один заказ, вызови start_new_order
 6. Когда пользоваться называет адрес остановки(промежуточной точки), вызови set_waypoint_address
+7. Адрес передавай ЛИБО парой «street»+«house» одновременно, ЛИБО только
+   «landmark» (ориентир), но НИКОГДА не оба варианта сразу.
+8. НИКОГДА не выдумывай номер дома или ориентир. Если пользователь не назвал
+   номер дома или ориентир — переспроси его, не придумывай данные сам.
 ### Справочник улиц Аскарово
 
 Используй этот список для нормализации названий улиц.
@@ -610,169 +756,93 @@ SYSTEM_PROMPT_B = """Ты — диспетчер такси. Помоги пол
 # ---------------------------------------------------------------------------
 # Схемы tools
 # ---------------------------------------------------------------------------
-def _address_properties() -> dict:
-    """Общие свойства параметров адреса (street/house/landmark)."""
-    return {
-        "street": {"type": "string", "description": "Название улицы"},
-        "house": {"type": "string", "description": "Номер дома (необязательно)"},
-        "landmark": {"type": "string", "description": "Ориентир (необязательно)"},
-    }
+TOOLS_A: list[tuple[str, str, type[BaseModel]]] = [
+    (
+        "create_order",
+        "Создать новый заказ. Вызывай ПЕРВЫМ, перед заполнением адресов.",
+        CreateOrderInput,
+    ),
+    (
+        "set_pickup_address",
+        "Установить адрес подачи (откуда забрать пассажира) для заказа. "
+        "Адрес: либо street+house одновременно, либо ТОЛЬКО landmark. "
+        "Не выдумывай номер дома — если его нет, переспроси.",
+        SetPickupAddressInputA,
+    ),
+    (
+        "set_destination_address",
+        "Установить адрес назначения (куда ехать) для заказа. "
+        "Адрес: либо street+house одновременно, либо ТОЛЬКО landmark. "
+        "Не выдумывай номер дома — если его нет, переспроси.",
+        SetDestinationAddressInputA,
+    ),
+    (
+        "set_waypoint_address",
+        "Установить адрес остановки (промежуточная точка) для заказа. "
+        "Адрес: либо street+house одновременно, либо ТОЛЬКО landmark. "
+        "Не выдумывай номер дома — если его нет, переспроси.",
+        SetWaypointAddressInputA,
+    ),
+    (
+        "confirm_order",
+        "Подтвердить заказ после того, как оба адреса установлены.",
+        ConfirmOrderInputA,
+    ),
+    (
+        "cancel_order",
+        "Отменить заказ.",
+        CancelOrderInputA,
+    ),
+]
 
 
 def build_tools_a() -> list[dict]:
-    """Схемы tools для варианта A (с order_id)."""
-    return [
-        {
-            "type": "function",
-            "function": {
-                "name": "create_order",
-                "description": "Создать новый заказ. Вызывай ПЕРВЫМ, перед заполнением адресов.",
-                "parameters": {"type": "object", "properties": {}, "required": []},
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "set_pickup_address",
-                "description": "Установить адрес подачи (откуда забрать пассажира) для заказа.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "order_id": {
-                            "type": "string",
-                            "description": "ID заказа, полученный из create_order",
-                        },
-                        **_address_properties(),
-                    },
-                    "required": ["order_id", "street"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "set_destination_address",
-                "description": "Установить адрес назначения (куда ехать) для заказа.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "order_id": {
-                            "type": "string",
-                            "description": "ID заказа, полученный из create_order",
-                        },
-                        **_address_properties(),
-                    },
-                    "required": ["order_id", "street"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "set_waypoint_address",
-                "description": "Установить адрес остановки (промежуточная точка) для заказа.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "order_id": {
-                            "type": "string",
-                            "description": "ID заказа, полученный из create_order",
-                        },
-                        **_address_properties(),
-                    },
-                    "required": ["order_id", "street"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "confirm_order",
-                "description": "Подтвердить заказ после того, как оба адреса установлены.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "order_id": {
-                            "type": "string",
-                            "description": "ID заказа, полученный из create_order",
-                        },
-                    },
-                    "required": ["order_id"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "cancel_order",
-                "description": "Отменить заказ.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "order_id": {
-                            "type": "string",
-                            "description": "ID заказа, полученный из create_order",
-                        },
-                    },
-                    "required": ["order_id"],
-                },
-            },
-        },
-    ]
+    """OpenAI tool-specs для варианта A (с order_id)."""
+    return [_tool_spec(name, desc, model) for name, desc, model in TOOLS_A]
+
+
+TOOLS_B: list[tuple[str, str, type[BaseModel]]] = [
+    (
+        "set_pickup_address",
+        "Установить адрес подачи (откуда забрать пассажира) для текущего заказа. "
+        "Адрес: либо street+house одновременно, либо ТОЛЬКО landmark. "
+        "Не выдумывай номер дома — если его нет, переспроси.",
+        SetPickupAddressInputB,
+    ),
+    (
+        "set_destination_address",
+        "Установить адрес назначения (куда ехать) для текущего заказа. "
+        "Адрес: либо street+house одновременно, либо ТОЛЬКО landmark. "
+        "Не выдумывай номер дома — если его нет, переспроси.",
+        SetDestinationAddressInputB,
+    ),
+    (
+        "confirm_order",
+        "Подтвердить текущий заказ после того, как оба адреса установлены.",
+        ConfirmOrderInputB,
+    ),
+    (
+        "cancel_order",
+        "Отменить текущий заказ.",
+        CancelOrderInputB,
+    ),
+    (
+        "start_new_order",
+        "Создать новый заказ. Вызывай только для второго и последующих заказов.",
+        StartNewOrderInputB,
+    ),
+]
 
 
 def build_tools_b() -> list[dict]:
-    """Схемы tools для варианта B (без order_id)."""
-    return [
-        {
-            "type": "function",
-            "function": {
-                "name": "set_pickup_address",
-                "description": "Установить адрес подачи (откуда забрать пассажира) для текущего заказа.",
-                "parameters": {
-                    "type": "object",
-                    "properties": _address_properties(),
-                    "required": ["street"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "set_destination_address",
-                "description": "Установить адрес назначения (куда ехать) для текущего заказа.",
-                "parameters": {
-                    "type": "object",
-                    "properties": _address_properties(),
-                    "required": ["street"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "confirm_order",
-                "description": "Подтвердить текущий заказ после того, как оба адреса установлены.",
-                "parameters": {"type": "object", "properties": {}, "required": []},
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "cancel_order",
-                "description": "Отменить текущий заказ.",
-                "parameters": {"type": "object", "properties": {}, "required": []},
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "start_new_order",
-                "description": "Создать новый заказ. Вызывай только для второго и последующих заказов.",
-                "parameters": {"type": "object", "properties": {}, "required": []},
-            },
-        },
-    ]
+    """OpenAI tool-specs для варианта B (без order_id)."""
+    return [_tool_spec(name, desc, model) for name, desc, model in TOOLS_B]
+
+
+def build_tool_models(variant: str) -> dict[str, type[BaseModel]]:
+    """Возвращает {имя tool: Pydantic-модель} для валидации аргументов LLM."""
+    table = TOOLS_A if variant == "A" else TOOLS_B
+    return {name: model for name, _, model in table}
 
 
 # ---------------------------------------------------------------------------
@@ -801,11 +871,23 @@ def build_handlers_b() -> dict[str, ToolHandler]:
     }
 
 
-def get_variant_config(variant: str) -> tuple[str, list[dict], dict[str, ToolHandler]]:
-    """Возвращает (system_prompt, tools, handlers) для выбранного варианта."""
+def get_variant_config(
+    variant: str,
+) -> tuple[str, list[dict], dict[str, ToolHandler], dict[str, type[BaseModel]]]:
+    """Возвращает (system_prompt, tools, handlers, tool_models) для варианта."""
     if variant == "A":
-        return SYSTEM_PROMPT_A, build_tools_a(), build_handlers_a()
-    return SYSTEM_PROMPT_B, build_tools_b(), build_handlers_b()
+        return (
+            SYSTEM_PROMPT_A,
+            build_tools_a(),
+            build_handlers_a(),
+            build_tool_models("A"),
+        )
+    return (
+        SYSTEM_PROMPT_B,
+        build_tools_b(),
+        build_handlers_b(),
+        build_tool_models("B"),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -817,6 +899,7 @@ async def process_user_message(
     state: InMemoryState,
     tools: list[dict],
     handlers: dict[str, ToolHandler],
+    tool_models: dict[str, type[BaseModel]],
     user_text: str,
 ) -> None:
     """
@@ -866,6 +949,31 @@ async def process_user_message(
                     logger.warning("Не удалось распарсить аргументы tool %s", name)
                     arguments = {}
 
+                # Валидируем аргументы LLM через Pydantic-схему соответствующего tool
+                model_cls = tool_models.get(name)
+                if model_cls is not None:
+                    try:
+                        parsed_args: BaseModel = model_cls.model_validate(arguments)
+                    except ValidationError as exc:
+                        result = {
+                            "status": "error",
+                            "message": (
+                                f"Некорректные аргументы для {name}: "
+                                f"{exc.errors(include_url=False)}"
+                            ),
+                        }
+                        record_tool_call(state, name, arguments, result)
+                        state.history.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tool_call.id,
+                                "content": json.dumps(result, ensure_ascii=False),
+                            }
+                        )
+                        continue
+                else:
+                    parsed_args = arguments
+
                 handler = handlers.get(name)
                 if handler is None:
                     result = {
@@ -873,7 +981,7 @@ async def process_user_message(
                         "message": f"Неизвестный tool: {name}",
                     }
                 else:
-                    result = await handler(arguments, state)
+                    result = await handler(parsed_args, state)
 
                 record_tool_call(state, name, arguments, result)
 
@@ -908,6 +1016,7 @@ async def run_interactive_dialog(
     state: InMemoryState,
     tools: list[dict],
     handlers: dict[str, ToolHandler],
+    tool_models: dict[str, type[BaseModel]],
 ) -> None:
     """
     Интерактивный цикл диалога: пользователь вводит сообщения,
@@ -926,7 +1035,9 @@ async def run_interactive_dialog(
         if user_text.lower() in EXIT_WORDS:
             break
 
-        await process_user_message(client, model, state, tools, handlers, user_text)
+        await process_user_message(
+            client, model, state, tools, handlers, tool_models, user_text
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -998,7 +1109,7 @@ async def main() -> None:
         sys.exit(1)
 
     # 3. Конфигурация варианта
-    system_prompt, tools, handlers = get_variant_config(variant)
+    system_prompt, tools, handlers, tool_models = get_variant_config(variant)
 
     print(f"\n🔧 Доступные tools (Вариант {variant}):")
     for tool in tools:
@@ -1022,6 +1133,7 @@ async def main() -> None:
             state=state,
             tools=tools,
             handlers=handlers,
+            tool_models=tool_models,
         )
     finally:
         # Корректное закрытие клиента

@@ -68,6 +68,7 @@ class House(Base, TimestampMixin):
     landmarks: Mapped[list["Landmark"]] = relationship(
         "Landmark", back_populates="house", cascade="all, delete-orphan"
     )
+    price_override: Mapped[int | None] = mapped_column(Integer, nullable=True)
     __table_args__ = (
         UniqueConstraint("street_id", "number", name="uq_house_street_number"),
     )
