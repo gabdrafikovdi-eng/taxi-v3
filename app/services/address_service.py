@@ -237,24 +237,6 @@ class AddressService:
             status=AddressStatus.AMBIGUOUS, candidates=enriched_candidates
         )
 
-        # # 1. Сортируем по весу (score) от большего к меньшему
-        # sorted_candidates = sorted(candidates, key=lambda c: c.score, reverse=True)
-
-        # # 2. Оставляем только топ-3 варианта
-        # top_candidates = sorted_candidates[:3]
-
-        # # 3. Если главный кандидат имеет высокий скор и сильно оторвался от второго
-        # first = top_candidates[0]
-        # if first.score >= 0.8 and (
-        #     len(top_candidates) == 1 or (first.score - top_candidates[1].score) >= 0.3
-        # ):
-        #     return AddressMatchResult(status=AddressStatus.RESOLVED, candidates=[first])
-
-        # # 4. Если есть 2-3 близких кандидата -> обогащаем diff_feature и просим уточнить
-        # enriched_candidates = self._enrich_candidates_with_diff(top_candidates)
-        # return AddressMatchResult(
-        #     status=AddressStatus.AMBIGUOUS, candidates=enriched_candidates
-        # )
 
     def _enrich_candidates_with_diff(
         self, candidates: list[AddressCandidate]

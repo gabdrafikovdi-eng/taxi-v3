@@ -99,21 +99,6 @@ class Order(Base, TimestampMixin):
 
     __mapper_args__ = {"version_id_col": version}
 
-    # @property
-    # def has_both_addresses(self) -> bool:
-    #     """
-    #     Оба адреса установлены и валидны.
-
-    #     Проверяем street_id, а не текстовый адрес, потому что
-    #     street_id заполняется только после успешной валидации.
-    #     """
-
-    # return bool(
-    #     self.pickup_street_id is not None
-    #     and self.destination_street_id is not None
-    #     or self.pickup_landmark_id is not None
-    #     and self.destination_landmark_id is not None
-    # )
     @property
     def has_both_addresses(self) -> bool:
         pickup_set = (

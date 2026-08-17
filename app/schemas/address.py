@@ -1,7 +1,7 @@
 from pydantic.config import ConfigDict
 from pydantic.fields import Field
 from pydantic import BaseModel
-
+from app.models.address import Street
 from enum import StrEnum
 
 
@@ -81,3 +81,34 @@ class PricingAddress(BaseModel):
     district_price: int | None = None
     street_price: int | None = None
     house_price: int | None = None
+
+
+class AddressContext(BaseModel):
+    town_id: int
+    district_ids: list[int]
+
+
+class StreetMatch(BaseModel):
+    """Совпадение по улице (результат этапа StreetResolver)."""
+
+    # `street` — это ORM-объект SQLAlchemy (app.models.address.Street),
+    # а не Pydantic-модель, поэтому нужен arbitrary_types_allowed.
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    street: Street
+    score: float
+    match_type: MatchType
+
+
+class HouseNumberType(StrEnum):
+    PLAIN = "plain"
+    LETTER = "letter"
+    CORPUS = "corpus"
+    FRACTION = "fraction"
+
+
+class HouseNumberParts(BaseModel):
+    model_config = ConfigDict(frozen=True)
+    base: str
+    type: HouseNumberType
+    suffix: str | None = None
