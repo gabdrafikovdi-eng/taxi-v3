@@ -1,5 +1,11 @@
+from app.models.address import House
 from app.repositories.address_repo import AddressRepository
-from app.schemas.address import AddressCandidate
+from app.schemas.address import (
+    AddressCandidate,
+    HouseNumberParts,
+    HouseNumberType,
+)
+from app.services.address.house_number_parser import parse_house_number
 
 
 class AddressSuggestionService:
@@ -18,9 +24,7 @@ class AddressSuggestionService:
         """
         Ищет похожие номера домов.
 
-        ВАЖНО:
-
-        suggestions никогда не являются автоматически
+        Suggestions никогда не являются автоматически
         разрешённым адресом.
 
         Например:
@@ -28,24 +32,72 @@ class AddressSuggestionService:
             пользователь: Гагарина 2
             БД:          Гагарина 2а
 
-        результат:
+        Результат:
 
             suggestion = Гагарина 2а
 
         Но статус основного resolver остаётся NOT_FOUND.
         """
 
-        houses = await self.address_repo.find_house_suggestions(
+        if limit <= 0:
+            return []
+
+        requested = parse_house_number(house_number)
+
+        if requested is None:
+            return []
+
+        houses = await self.address_repo.get_houses_by_street_id(
             street_id=street_id,
-            number=house_number,
-            limit=limit,
         )
 
-        return [self._build_candidate(house) for house in houses]
+        suggestions: list[House] = []
+
+        for house in houses:
+            candidate = parse_house_number(house.number)
+
+            if candidate is None:
+                continue
+
+            if not self._is_compatible(
+                requested=requested,
+                candidate=candidate,
+            ):
+                continue
+
+            suggestions.append(house)
+
+        suggestions = self._sort_suggestions(requested=requested, houses=suggestions)
+
+        suggestions = suggestions[:limit]
+
+        return [self._build_candidate(house) for house in suggestions]
+
+    def _is_compatible(
+        self,
+        requested: HouseNumberParts,
+        candidate: HouseNumberParts,
+    ) -> bool:
+        if requested.base != candidate.base:
+            return False
+
+        if requested.type is HouseNumberType.PLAIN:
+            return candidate.type is not HouseNumberType.PLAIN
+
+        if requested.type is HouseNumberType.LETTER:
+            return candidate.type is HouseNumberType.LETTER
+
+        if requested.type is HouseNumberType.CORPUS:
+            return candidate.type is HouseNumberType.CORPUS
+
+        if requested.type is HouseNumberType.FRACTION:
+            return candidate.type is HouseNumberType.FRACTION
+
+        return False
 
     def _build_candidate(
         self,
-        house,
+        house: House,
     ) -> AddressCandidate:
         street = house.street
         district = street.district
@@ -64,4 +116,84 @@ class AddressSuggestionService:
             landmark_name=None,
             full_address=(f"ул. {street.name}, д. {house.number}, р-н {district.name}"),
             score=0.0,
+        )
+
+    def _sort_suggestions(
+        self,
+        requested: HouseNumberParts,
+        houses: list[House],
+    ) -> list[House]:
+        if requested.type is HouseNumberType.LETTER:
+            return sorted(
+                houses,
+                key=lambda house: self._letter_sort_key(house),
+            )
+
+        if requested.type is HouseNumberType.CORPUS:
+            return sorted(
+                houses,
+                key=lambda house: self._numeric_suffix_sort_key(house),
+            )
+
+        if requested.type is HouseNumberType.FRACTION:
+            return sorted(
+                houses,
+                key=lambda house: self._numeric_suffix_sort_key(house),
+            )
+
+        if requested.type is HouseNumberType.PLAIN:
+            return sorted(
+                houses,
+                key=self._plain_sort_key,
+            )
+
+        return houses
+
+    def _letter_sort_key(
+        self,
+        house: House,
+    ) -> str:
+        parts = parse_house_number(house.number)
+
+        if parts is None or parts.suffix is None:
+            return ""
+
+        return parts.suffix
+
+    def _numeric_suffix_sort_key(
+        self,
+        house: House,
+    ) -> int:
+        parts = parse_house_number(house.number)
+
+        if parts is None or parts.suffix is None:
+            return 0
+
+        return int(parts.suffix)
+
+    def _plain_sort_key(
+        self,
+        house: House,
+    ) -> tuple[int, int, str]:
+        parts = parse_house_number(house.number)
+
+        if parts is None:
+            return (99, 0, house.number)
+
+        type_order = {
+            HouseNumberType.LETTER: 1,
+            HouseNumberType.CORPUS: 2,
+            HouseNumberType.FRACTION: 3,
+            HouseNumberType.PLAIN: 4,
+        }
+
+        suffix_number = 0
+
+        if parts.suffix and parts.suffix.isdigit():
+            suffix_number = int(parts.suffix)
+
+        return (
+            type_order.get(parts.type, 99),
+            suffix_number,
+            house.number,
         )

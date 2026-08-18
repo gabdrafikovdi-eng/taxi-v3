@@ -158,3 +158,19 @@ class AddressRepository:
             street_price=row.street_price,
             house_price=row.house_price,
         )
+
+    async def get_houses_by_street_id(self, street_id: int) -> list[House]:
+        stmt = (
+            select(House)
+            .where(House.street_id == street_id)
+            .options(
+                selectinload(House.street)
+                .selectinload(Street.district)
+                .selectinload(District.town)
+            )
+            .order_by(House.number)
+        )
+
+        result = await self.session.execute(stmt)
+
+        return list(result.scalars().all())

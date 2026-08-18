@@ -1,0 +1,1420 @@
+{
+  "test_suite": "AddressService + Suggestions",
+  "description": "Integration/regression scenarios for AddressService including address resolution, normalization, fuzzy matching, landmarks and house suggestions.",
+  "documentation": {
+    "_comment": "ЭТОТ ФАЙЛ ЯВЛЯЕТСЯ ОСНОВНЫМ ИСТОЧНИКОМ ТРЕБОВАНИЙ ДЛЯ ТЕСТОВ. Pytest читает его при КАЖДОМ запуске (tests/scenario_loader.py). Изменения в этом файле автоматически влияют на следующий запуск pytest. Не копируйте сценарии вручную в код тестов.",
+    "fields": {
+      "id": "Уникальный идентификатор сценария (например, A01, S42). Обязательное поле.",
+      "input": "Объект AddressInput: town, district, street, house, landmark. Все поля опциональны (null допустим).",
+      "expected_status": "Ожидаемый статус AddressMatchResult: INCOMPLETE | RESOLVED | AMBIGUOUS | NOT_FOUND. Допустимы комбинированные значения (тест проходит при любом из перечисленных статусов): NOT_FOUND_OR_RESOLVED, AMBIGUOUS_OR_RESOLVED_ACCORDING_TO_DB, RESOLVED_OR_NOT_FOUND_ACCORDING_TO_DISTRICT_FILTER, RESOLVED_OR_NOT_FOUND_ACCORDING_TO_LANDMARK_FUZZY_RULES, NOT_FOUND_OR_RESOLVED_ACCORDING_TO_DB.",
+      "expected_candidates": "Ожидаемый список кандидатов (обычно [] для NOT_FOUND/INCOMPLETE).",
+      "expected_suggestions": "Ожидаемый список suggestions (обычно []).",
+      "expected_suggestions_non_empty": "true — suggestions НЕ должны быть пустыми.",
+      "expected_resolved_street": "Ожидаемое имя улицы у единственного RESOLVED-кандидата (для fuzzy-проверок).",
+      "expected_street": "Ожидаемая улица кандидата (например, для landmark-сценариев).",
+      "expected_house": "Ожидаемый номер дома кандидата (например, для landmark-сценариев).",
+      "expected_suggestion_contains": "Список номеров домов, которые ДОЛЖНЫ присутствовать среди suggestions.",
+      "expected_suggestion_excludes": "Список номеров домов, которых НЕ должно быть среди suggestions.",
+      "suggestions_limit": "Максимально допустимое число suggestions (тест проверяет len(suggestions) <= limit).",
+      "suggestions_rule": "Человекочитаемое правило отбора suggestions (например, 'suggest houses with base number 14 only'). Тест проверяет, что все suggestions соответствуют правилу (base + структура номера).",
+      "assertion": "Человекочитаемое требование. Сопоставляется с предикатом из tests/scenario_assertions.py. Если предикат не найден — тест получает FAIL с сообщением 'unhandled assertion', а не молча пропускается."
+    },
+    "example": {
+      "id": "S_EXAMPLE",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "14к9"
+      },
+      "expected_status": "NOT_FOUND",
+      "expected_candidates": [],
+      "expected_suggestion_contains": [
+        "14к1"
+      ],
+      "expected_suggestion_excludes": [
+        "14а",
+        "14/1",
+        "14"
+      ],
+      "suggestions_limit": 3,
+      "assertion": "suggestions must preserve corpus structure"
+    }
+  },
+  "scenarios": [
+    {
+      "id": "A01",
+      "input": {},
+      "expected_status": "INCOMPLETE",
+      "expected_candidates": [],
+      "expected_suggestions": []
+    },
+    {
+      "id": "A02",
+      "input": {
+        "street": "Гагарина"
+      },
+      "expected_status": "INCOMPLETE"
+    },
+    {
+      "id": "A03",
+      "input": {
+        "house": "5"
+      },
+      "expected_status": "INCOMPLETE"
+    },
+    {
+      "id": "A04",
+      "input": {
+        "district": "Центр"
+      },
+      "expected_status": "INCOMPLETE"
+    },
+    {
+      "id": "A05",
+      "input": {
+        "street": "Гагарина",
+        "house": null
+      },
+      "expected_status": "INCOMPLETE"
+    },
+    {
+      "id": "A06",
+      "input": {
+        "street": null,
+        "house": "5"
+      },
+      "expected_status": "INCOMPLETE"
+    },
+    {
+      "id": "A07",
+      "input": {
+        "street": "Гагарина",
+        "house": null,
+        "landmark": null
+      },
+      "expected_status": "INCOMPLETE"
+    },
+    {
+      "id": "A08",
+      "input": {
+        "street": "Гагарина",
+        "house": "5"
+      },
+      "expected_status": "RESOLVED",
+      "expected_suggestions": []
+    },
+    {
+      "id": "A09",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "2а"
+      },
+      "expected_status": "RESOLVED",
+      "expected_suggestions": []
+    },
+    {
+      "id": "A10",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "127/1"
+      },
+      "expected_status": "RESOLVED",
+      "expected_suggestions": []
+    },
+    {
+      "id": "A11",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "14к1"
+      },
+      "expected_status": "RESOLVED",
+      "expected_suggestions": []
+    },
+    {
+      "id": "A12",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "16/1"
+      },
+      "expected_status": "RESOLVED",
+      "expected_suggestions": []
+    },
+    {
+      "id": "A13",
+      "input": {
+        "street": "Шаймуратова",
+        "district": "Центр",
+        "house": "12а"
+      },
+      "expected_status": "RESOLVED",
+      "expected_suggestions": []
+    },
+    {
+      "id": "A14",
+      "input": {
+        "street": "Шаймуратова",
+        "district": "Центр",
+        "house": "14/1"
+      },
+      "expected_status": "RESOLVED",
+      "expected_suggestions": []
+    },
+    {
+      "id": "A15",
+      "input": {
+        "street": "Шагали Шакмана",
+        "district": "Северный",
+        "house": "16/1"
+      },
+      "expected_status": "RESOLVED",
+      "expected_suggestions": []
+    },
+    {
+      "id": "A16",
+      "input": {
+        "street": " Гагарина ",
+        "house": "5"
+      },
+      "expected_status": "RESOLVED"
+    },
+    {
+      "id": "A17",
+      "input": {
+        "street": "ГАгАрИнА",
+        "house": "5"
+      },
+      "expected_status": "RESOLVED"
+    },
+    {
+      "id": "A18",
+      "input": {
+        "street": "ул. Гагарина",
+        "house": "5"
+      },
+      "expected_status": "RESOLVED"
+    },
+    {
+      "id": "A19",
+      "input": {
+        "street": "улица Гагарина",
+        "house": "5"
+      },
+      "expected_status": "RESOLVED"
+    },
+    {
+      "id": "A20",
+      "input": {
+        "street": "  ул.   Гагарина  ",
+        "house": "5"
+      },
+      "expected_status": "RESOLVED"
+    },
+    {
+      "id": "A21",
+      "input": {
+        "street": "\"Советская\"",
+        "house": "2"
+      },
+      "expected_status": "RESOLVED"
+    },
+    {
+      "id": "A22",
+      "input": {
+        "town": "аскарово",
+        "street": "Гагарина",
+        "house": "5"
+      },
+      "expected_status": "RESOLVED"
+    },
+    {
+      "id": "A23",
+      "input": {
+        "town": null,
+        "street": "Гагарина",
+        "house": "5"
+      },
+      "expected_status": "RESOLVED"
+    },
+    {
+      "id": "A24",
+      "input": {
+        "street": "Гагарина",
+        "house": "2"
+      },
+      "expected_status": "NOT_FOUND",
+      "expected_candidates": [],
+      "expected_suggestions_non_empty": true
+    },
+    {
+      "id": "A25",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "999"
+      },
+      "expected_status": "NOT_FOUND",
+      "expected_candidates": []
+    },
+    {
+      "id": "A26",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "999/1"
+      },
+      "expected_status": "NOT_FOUND",
+      "expected_candidates": []
+    },
+    {
+      "id": "A27",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "999к9"
+      },
+      "expected_status": "NOT_FOUND",
+      "expected_candidates": []
+    },
+    {
+      "id": "A28",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "999а"
+      },
+      "expected_status": "NOT_FOUND",
+      "expected_candidates": []
+    },
+    {
+      "id": "A29",
+      "input": {
+        "street": "Гагарина",
+        "house": "1/999"
+      },
+      "expected_status": "NOT_FOUND",
+      "expected_candidates": []
+    },
+    {
+      "id": "A30",
+      "input": {
+        "street": "Ленина",
+        "house": "13"
+      },
+      "expected_status": "RESOLVED"
+    },
+    {
+      "id": "A31",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "13"
+      },
+      "expected_status": "RESOLVED"
+    },
+    {
+      "id": "A32",
+      "input": {
+        "street": "Ленина",
+        "district": "Восточный-1",
+        "house": "13"
+      },
+      "expected_status": "NOT_FOUND"
+    },
+    {
+      "id": "A33",
+      "input": {
+        "street": "Шаймуратова",
+        "house": "12"
+      },
+      "expected_status": "AMBIGUOUS_OR_RESOLVED_ACCORDING_TO_DB"
+    },
+    {
+      "id": "A34",
+      "input": {
+        "street": "Шаймуратова",
+        "district": "Центр",
+        "house": "12"
+      },
+      "expected_status": "RESOLVED"
+    },
+    {
+      "id": "A35",
+      "input": {
+        "street": "Мера",
+        "house": "9"
+      },
+      "expected_status": "RESOLVED",
+      "expected_resolved_street": "Мира"
+    },
+    {
+      "id": "A36",
+      "input": {
+        "street": "Шахмуратов",
+        "house": "12"
+      },
+      "expected_status": "RESOLVED",
+      "expected_resolved_street": "Шаймуратова"
+    },
+    {
+      "id": "A37",
+      "input": {
+        "street": "Гагарына",
+        "house": "5"
+      },
+      "expected_status": "RESOLVED",
+      "expected_resolved_street": "Гагарина"
+    },
+    {
+      "id": "A38",
+      "input": {
+        "street": "Гагарин",
+        "house": "5"
+      },
+      "expected_status": "RESOLVED",
+      "expected_resolved_street": "Гагарина"
+    },
+    {
+      "id": "A39",
+      "input": {
+        "street": "Гагаринаа",
+        "house": "5"
+      },
+      "expected_status": "RESOLVED",
+      "expected_resolved_street": "Гагарина"
+    },
+    {
+      "id": "A40",
+      "input": {
+        "street": "Советска",
+        "house": "2"
+      },
+      "expected_status": "RESOLVED",
+      "expected_resolved_street": "Советская"
+    },
+    {
+      "id": "A41",
+      "input": {
+        "street": "70 лет октябры",
+        "house": "89"
+      },
+      "expected_status": "RESOLVED"
+    },
+    {
+      "id": "A42",
+      "input": {
+        "street": "Комароваа",
+        "house": "5"
+      },
+      "expected_status": "RESOLVED"
+    },
+    {
+      "id": "A43",
+      "input": {
+        "landmark": "Больница"
+      },
+      "expected_status": "AMBIGUOUS"
+    },
+    {
+      "id": "A44",
+      "input": {
+        "landmark": "Районная больница"
+      },
+      "expected_status": "RESOLVED",
+      "expected_street": "Гагарина",
+      "expected_house": "5"
+    },
+    {
+      "id": "A45",
+      "input": {
+        "landmark": "Нижний Магнит"
+      },
+      "expected_status": "RESOLVED",
+      "expected_street": "Сафи Истамгалина",
+      "expected_house": "31"
+    },
+    {
+      "id": "A46",
+      "input": {
+        "landmark": "больница"
+      },
+      "expected_status": "AMBIGUOUS"
+    },
+    {
+      "id": "A47",
+      "input": {
+        "landmark": "Больниц"
+      },
+      "expected_status": "AMBIGUOUS"
+    },
+    {
+      "id": "A48",
+      "input": {
+        "landmark": "несуществующий объект"
+      },
+      "expected_status": "NOT_FOUND"
+    },
+    {
+      "id": "A49",
+      "input": {
+        "landmark": "Больница",
+        "district": "Центр"
+      },
+      "expected_status": "AMBIGUOUS"
+    },
+    {
+      "id": "A50",
+      "input": {
+        "landmark": "Больница",
+        "town": "Уфа"
+      },
+      "expected_status": "NOT_FOUND"
+    },
+    {
+      "id": "S01",
+      "input": {
+        "street": "Гагарина",
+        "house": "2"
+      },
+      "expected_status": "NOT_FOUND_OR_RESOLVED",
+      "suggestions_rule": "suggest houses matching base number 2 on the resolved street only"
+    },
+    {
+      "id": "S02",
+      "input": {
+        "street": "Гагарина",
+        "house": "4"
+      },
+      "expected_status": "RESOLVED",
+      "suggestions_rule": "suggest houses with base number 4 only"
+    },
+    {
+      "id": "S03",
+      "input": {
+        "street": "Гагарина",
+        "house": "9"
+      },
+      "expected_status": "RESOLVED",
+      "suggestions_rule": "suggest houses with base number 9 only"
+    },
+    {
+      "id": "S04",
+      "input": {
+        "street": "Гагарина",
+        "house": "999"
+      },
+      "expected_status": "NOT_FOUND",
+      "expected_suggestions": []
+    },
+    {
+      "id": "S05",
+      "input": {
+        "street": "Гагарина",
+        "house": "9999"
+      },
+      "expected_status": "NOT_FOUND",
+      "expected_suggestions": []
+    },
+    {
+      "id": "S06",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "14в"
+      },
+      "expected_status": "NOT_FOUND",
+      "suggestions_rule": "letter variant suggestions must match base 14 and letter structure"
+    },
+    {
+      "id": "S07",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "25в"
+      },
+      "expected_status": "NOT_FOUND",
+      "suggestions_rule": "suggest 25-letter variants only"
+    },
+    {
+      "id": "S08",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "8б"
+      },
+      "expected_status": "NOT_FOUND",
+      "suggestions_rule": "suggest 8-letter variants only"
+    },
+    {
+      "id": "S09",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "33в"
+      },
+      "expected_status": "NOT_FOUND",
+      "suggestions_rule": "suggest existing 33-letter variants only"
+    },
+    {
+      "id": "S10",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "14к9"
+      },
+      "expected_status": "NOT_FOUND",
+      "suggestions_rule": "suggest existing 14к variants only"
+    },
+    {
+      "id": "S11",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "33к9"
+      },
+      "expected_status": "NOT_FOUND",
+      "suggestions_rule": "suggest 33к variants only"
+    },
+    {
+      "id": "S12",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "10к9"
+      },
+      "expected_status": "NOT_FOUND",
+      "suggestions_rule": "suggest 10к variants only"
+    },
+    {
+      "id": "S13",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "25к9"
+      },
+      "expected_status": "NOT_FOUND",
+      "suggestions_rule": "suggest 25к variants only"
+    },
+    {
+      "id": "S14",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "2к9"
+      },
+      "expected_status": "NOT_FOUND",
+      "suggestions_rule": "suggest 2к variants only"
+    },
+    {
+      "id": "S15",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "2/9"
+      },
+      "expected_status": "NOT_FOUND",
+      "suggestions_rule": "suggest 2/fraction variants only"
+    },
+    {
+      "id": "S16",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "11/9"
+      },
+      "expected_status": "NOT_FOUND",
+      "suggestions_rule": "suggest 11/fraction variants only"
+    },
+    {
+      "id": "S17",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "21/9"
+      },
+      "expected_status": "NOT_FOUND",
+      "suggestions_rule": "suggest 21/fraction variants only"
+    },
+    {
+      "id": "S18",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "28/9"
+      },
+      "expected_status": "NOT_FOUND",
+      "suggestions_rule": "suggest 28/fraction variants only"
+    },
+    {
+      "id": "S19",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "127/9"
+      },
+      "expected_status": "NOT_FOUND",
+      "suggestions_rule": "suggest 127/fraction variants only"
+    },
+    {
+      "id": "S20",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "33в"
+      },
+      "assertion": "all suggestions must have the same street_id as the resolved street"
+    },
+    {
+      "id": "S21",
+      "input": {
+        "street": "Гагарина",
+        "house": "33в"
+      },
+      "assertion": "houses numbered 33 on another street must never appear"
+    },
+    {
+      "id": "S22",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "33в"
+      },
+      "assertion": "houses from another district must never appear"
+    },
+    {
+      "id": "S23",
+      "input": {
+        "town": "Аскарово",
+        "street": "Ленина",
+        "house": "33в"
+      },
+      "assertion": "houses from another town must never appear"
+    },
+    {
+      "id": "S24",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "33в"
+      },
+      "suggestions_limit": 1,
+      "assertion": "number of suggestions must be <= 1"
+    },
+    {
+      "id": "S25",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "33в"
+      },
+      "suggestions_limit": 2,
+      "assertion": "number of suggestions must be <= 2"
+    },
+    {
+      "id": "S26",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "33в"
+      },
+      "suggestions_limit": 3,
+      "assertion": "number of suggestions must be <= 3"
+    },
+    {
+      "id": "S27",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "33в"
+      },
+      "suggestions_limit": 10,
+      "assertion": "number of suggestions must be <= 10"
+    },
+    {
+      "id": "S28",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "33в"
+      },
+      "suggestions_limit": 100,
+      "assertion": "return all matching suggestions when fewer than limit exist"
+    },
+    {
+      "id": "S29",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "14к1"
+      },
+      "expected_status": "RESOLVED",
+      "expected_suggestions": [],
+      "assertion": "SuggestionService must not be called for an exact house"
+    },
+    {
+      "id": "S30",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "14к9"
+      },
+      "expected_status": "NOT_FOUND",
+      "assertion": "suggestions must not change status to RESOLVED"
+    },
+    {
+      "id": "S31",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "14к9"
+      },
+      "assertion": "suggestions must contain only real houses with non-null house_id"
+    },
+    {
+      "id": "S32",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "14к9"
+      },
+      "assertion": "exact house must not appear among suggestions"
+    },
+    {
+      "id": "S33",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "14к9"
+      },
+      "assertion": "suggestions must be restricted to resolved street"
+    },
+    {
+      "id": "S34",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "14к9"
+      },
+      "assertion": "suggestions must respect district context"
+    },
+    {
+      "id": "S35",
+      "input": {
+        "town": "Аскарово",
+        "street": "Ленина",
+        "house": "14к9"
+      },
+      "assertion": "suggestions must respect town context"
+    },
+    {
+      "id": "S36",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "14к9"
+      },
+      "assertion": "house suggestions must not use generic numeric proximity"
+    },
+    {
+      "id": "S37",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "33"
+      },
+      "assertion": "suggestions must not include unrelated numeric neighbors such as 32 or 34"
+    },
+    {
+      "id": "S38",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "33к9"
+      },
+      "assertion": "suggestions must not include 33а, 33б or 33/1 unless house-number matching rules explicitly allow them"
+    },
+    {
+      "id": "S39",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "33/9"
+      },
+      "assertion": "suggestions must not include 33к variants"
+    },
+    {
+      "id": "S40",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "33а"
+      },
+      "assertion": "suggestions must preserve the requested house-number structure"
+    },
+    {
+      "id": "S41",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "14к9"
+      },
+      "assertion": "every suggestion must be a House belonging to the resolved Street"
+    },
+    {
+      "id": "S42",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "14к9"
+      },
+      "assertion": "suggestion ordering must be deterministic"
+    },
+    {
+      "id": "S43",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "14к9"
+      },
+      "assertion": "duplicate houses must not occur in suggestions"
+    },
+    {
+      "id": "S44",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "999"
+      },
+      "assertion": "when no compatible house exists suggestions must be []"
+    },
+    {
+      "id": "S45",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "999"
+      },
+      "assertion": "NOT_FOUND with empty suggestions must remain valid"
+    },
+    {
+      "id": "S46",
+      "input": {
+        "street": " Гагарина ",
+        "house": "999"
+      },
+      "expected_status": "NOT_FOUND",
+      "assertion": "normalization must happen before suggestion search"
+    },
+    {
+      "id": "S47",
+      "input": {
+        "street": "ГАгАрИнА",
+        "house": "999"
+      },
+      "expected_status": "NOT_FOUND",
+      "assertion": "case normalization must not break suggestions"
+    },
+    {
+      "id": "S48",
+      "input": {
+        "street": "ул. Гагарина",
+        "house": "999"
+      },
+      "expected_status": "NOT_FOUND",
+      "assertion": "street type normalization must not break suggestions"
+    },
+    {
+      "id": "S49",
+      "input": {
+        "street": "Гагарына",
+        "house": "999"
+      },
+      "expected_status": "NOT_FOUND",
+      "assertion": "fuzzy street resolution must occur before house suggestions"
+    },
+    {
+      "id": "S50",
+      "input": {
+        "street": "Мера",
+        "house": "999"
+      },
+      "expected_status": "NOT_FOUND",
+      "assertion": "suggestions must be searched on resolved street Мира"
+    },
+    {
+      "id": "S51",
+      "input": {
+        "street": "Ленина",
+        "house": "14к9"
+      },
+      "expected_status": "NOT_FOUND",
+      "assertion": "if street is ambiguous, do not generate suggestions from an arbitrary street"
+    },
+    {
+      "id": "S52",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "14к9"
+      },
+      "expected_status": "NOT_FOUND",
+      "assertion": "district disambiguates street before suggestions"
+    },
+    {
+      "id": "S53",
+      "input": {
+        "street": "Несуществующая",
+        "house": "14к9"
+      },
+      "expected_status": "NOT_FOUND",
+      "expected_suggestions": []
+    },
+    {
+      "id": "S54",
+      "input": {
+        "street": null,
+        "house": "14к9"
+      },
+      "expected_status": "INCOMPLETE",
+      "expected_suggestions": []
+    },
+    {
+      "id": "S55",
+      "input": {
+        "street": "Ленина",
+        "house": null
+      },
+      "expected_status": "INCOMPLETE",
+      "expected_suggestions": []
+    },
+    {
+      "id": "S56",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "14к"
+      },
+      "assertion": "verify behavior for incomplete corpus house-number prefix"
+    },
+    {
+      "id": "S57",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "14/"
+      },
+      "assertion": "verify behavior for incomplete fraction house-number prefix"
+    },
+    {
+      "id": "S58",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "14а"
+      },
+      "assertion": "verify letter matching is not confused with corpus matching"
+    },
+    {
+      "id": "S59",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "14/9"
+      },
+      "assertion": "verify fraction matching is not confused with corpus matching"
+    },
+    {
+      "id": "S60",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "14к9"
+      },
+      "assertion": "verify corpus matching is not confused with letter matching"
+    },
+    {
+      "id": "S61",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "127/9"
+      },
+      "expected_status": "NOT_FOUND",
+      "expected_suggestion_contains": [
+        "127/1"
+      ],
+      "expected_suggestion_excludes": [
+        "127а",
+        "127к1",
+        "127"
+      ]
+    },
+    {
+      "id": "S62",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "14к9"
+      },
+      "expected_status": "NOT_FOUND",
+      "expected_suggestion_contains": [
+        "14к1"
+      ],
+      "expected_suggestion_excludes": [
+        "14а",
+        "14/1",
+        "14"
+      ]
+    },
+    {
+      "id": "S63",
+      "input": {
+        "street": "Шаймуратова",
+        "district": "Центр",
+        "house": "14/9"
+      },
+      "expected_status": "NOT_FOUND",
+      "expected_suggestion_contains": [
+        "14/1"
+      ],
+      "expected_suggestion_excludes": [
+        "14а",
+        "14к1"
+      ]
+    },
+    {
+      "id": "S64",
+      "input": {
+        "street": "Шаймуратова",
+        "district": "Центр",
+        "house": "12б"
+      },
+      "assertion": "letter suggestions must use only existing 12-letter variants"
+    },
+    {
+      "id": "S65",
+      "input": {
+        "street": "Шаймуратова",
+        "district": "Центр",
+        "house": "12к9"
+      },
+      "assertion": "corpus suggestions must use only existing 12к variants"
+    },
+    {
+      "id": "S66",
+      "input": {
+        "street": "Гагарина",
+        "house": "5"
+      },
+      "expected_status": "RESOLVED",
+      "assertion": "exact house must return no suggestions even if other variants of 5 exist"
+    },
+    {
+      "id": "S67",
+      "input": {
+        "street": "Гагарина",
+        "house": "5а"
+      },
+      "expected_status": "NOT_FOUND_OR_RESOLVED_ACCORDING_TO_DB",
+      "assertion": "if exact 5а does not exist, suggestions may contain compatible 5 variants"
+    },
+    {
+      "id": "S68",
+      "input": {
+        "street": "Гагарина",
+        "house": "5к9"
+      },
+      "expected_status": "NOT_FOUND",
+      "assertion": "suggestions must respect corpus structure"
+    },
+    {
+      "id": "S69",
+      "input": {
+        "street": "Гагарина",
+        "house": "5/9"
+      },
+      "expected_status": "NOT_FOUND",
+      "assertion": "suggestions must respect fraction structure"
+    },
+    {
+      "id": "S70",
+      "input": {
+        "street": "Гагарина",
+        "house": "500"
+      },
+      "expected_status": "NOT_FOUND",
+      "expected_suggestions": []
+    },
+    {
+      "id": "S71",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "14к9"
+      },
+      "assertion": "suggestions must not contain null values"
+    },
+    {
+      "id": "S72",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "14к9"
+      },
+      "assertion": "suggestion objects must satisfy the expected Pydantic schema"
+    },
+    {
+      "id": "S73",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "14к9"
+      },
+      "assertion": "suggestions must contain valid house identifiers"
+    },
+    {
+      "id": "S74",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "14к9"
+      },
+      "assertion": "suggestions must belong to the same resolved town"
+    },
+    {
+      "id": "S75",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "14к9"
+      },
+      "assertion": "suggestions must belong to the same resolved district when district context is supplied"
+    },
+    {
+      "id": "S76",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "14к9"
+      },
+      "assertion": "calling AddressService twice with identical input must produce identical suggestions"
+    },
+    {
+      "id": "S77",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "14к9"
+      },
+      "assertion": "suggestion count must not exceed configured default limit"
+    },
+    {
+      "id": "S78",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "14к9"
+      },
+      "assertion": "suggestions must not include duplicate house IDs"
+    },
+    {
+      "id": "S79",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "14к9"
+      },
+      "assertion": "suggestions must not include duplicate house numbers"
+    },
+    {
+      "id": "S80",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "999"
+      },
+      "assertion": "no unrelated suggestions may be returned merely because the numeric distance is small"
+    },
+    {
+      "id": "S81",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "13а"
+      },
+      "assertion": "suggestions must be generated only if 13а is absent and compatible alternatives exist"
+    },
+    {
+      "id": "S82",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "13к9"
+      },
+      "assertion": "suggestions must preserve corpus structure"
+    },
+    {
+      "id": "S83",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "13/9"
+      },
+      "assertion": "suggestions must preserve fraction structure"
+    },
+    {
+      "id": "S84",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "13в"
+      },
+      "assertion": "suggestions must preserve letter structure"
+    },
+    {
+      "id": "S85",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "13"
+      },
+      "assertion": "exact/ambiguous address behavior must be evaluated before suggestions"
+    },
+    {
+      "id": "S86",
+      "input": {
+        "street": "Мера",
+        "house": "999"
+      },
+      "expected_status": "NOT_FOUND",
+      "assertion": "fuzzy street resolution must resolve Мера to Мира before suggestion search"
+    },
+    {
+      "id": "S87",
+      "input": {
+        "street": "Шахмуратов",
+        "house": "999"
+      },
+      "expected_status": "NOT_FOUND",
+      "assertion": "fuzzy street resolution must resolve Шахмуратов to Шаймуратова before suggestion search"
+    },
+    {
+      "id": "S88",
+      "input": {
+        "street": "Гагарына",
+        "house": "999"
+      },
+      "expected_status": "NOT_FOUND",
+      "assertion": "suggestions must use Гагарина rather than the raw misspelled street"
+    },
+    {
+      "id": "S89",
+      "input": {
+        "street": "Советска",
+        "house": "999"
+      },
+      "expected_status": "NOT_FOUND",
+      "assertion": "suggestions must use Советская rather than the raw misspelled street"
+    },
+    {
+      "id": "S90",
+      "input": {
+        "street": "Комароваа",
+        "house": "999"
+      },
+      "expected_status": "NOT_FOUND",
+      "assertion": "suggestions must use the resolved street rather than raw input"
+    },
+    {
+      "id": "S91",
+      "input": {
+        "landmark": "Больница",
+        "house": "999"
+      },
+      "assertion": "landmark resolution must be handled according to AddressService contract; house suggestions must not be generated without a resolved street context"
+    },
+    {
+      "id": "S92",
+      "input": {
+        "landmark": "Больница",
+        "street": "Ленина",
+        "house": "999"
+      },
+      "expected_status": "AMBIGUOUS",
+      "assertion": "verify interaction between landmark resolution and explicit street/house"
+    },
+    {
+      "id": "S93",
+      "input": {
+        "landmark": "Районная больница",
+        "house": "999"
+      },
+      "assertion": "verify landmark-to-street resolution before house suggestion generation"
+    },
+    {
+      "id": "S94",
+      "input": {
+        "landmark": "Нижний Магнит",
+        "house": "999"
+      },
+      "assertion": "verify landmark-to-street resolution before house suggestion generation"
+    },
+    {
+      "id": "S95",
+      "input": {
+        "landmark": "несуществующий объект",
+        "house": "999"
+      },
+      "expected_status": "NOT_FOUND",
+      "expected_suggestions": []
+    },
+    {
+      "id": "S96",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "14к9"
+      },
+      "assertion": "AddressService must return suggestions only after exact house lookup fails"
+    },
+    {
+      "id": "S97",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "14к9"
+      },
+      "assertion": "HouseResolver must not create AddressCandidate with house_id=None"
+    },
+    {
+      "id": "S98",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "14к9"
+      },
+      "assertion": "suggestions must not be mixed with resolved candidates"
+    },
+    {
+      "id": "S99",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "14к9"
+      },
+      "assertion": "NOT_FOUND response must remain structurally valid when suggestions are present"
+    },
+    {
+      "id": "S100",
+      "input": {
+        "street": "Ленина",
+        "district": "Центр",
+        "house": "999"
+      },
+      "assertion": "final response must contain no candidate with unresolved or null house"
+    }
+  ]
+}

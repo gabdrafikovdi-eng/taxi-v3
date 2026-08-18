@@ -66,6 +66,7 @@ class AddressMatchResult(BaseModel):
 
     status: AddressStatus
     candidates: list[AddressCandidate] = Field(default_factory=list)
+    suggestions: list[AddressCandidate] = Field(default_factory=list)
     reason: str | None = None
 
 

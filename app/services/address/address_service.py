@@ -3,14 +3,17 @@ import re
 from app.core.config import address_config
 from app.repositories.address_repo import AddressRepository
 from app.schemas.address import (
+    AddressCandidate,
     AddressInput,
     AddressMatchResult,
     AddressStatus,
+    NormalizedAddressInput,
 )
 from app.services.address.context_resolver import ContextResolver
 from app.services.address.house_resolver import HouseResolver
 from app.services.address.landmark_resolver import LandmarkResolver
 from app.services.address.street_resolver import StreetResolver
+from app.services.address.suggestion_service import AddressSuggestionService
 
 
 class AddressService:
@@ -21,12 +24,14 @@ class AddressService:
         street_resolver: StreetResolver,
         house_resolver: HouseResolver,
         landmark_resolver: LandmarkResolver,
+        address_suggestion_service: AddressSuggestionService,
     ):
         self.address_repo = address_repo
         self.context_resolver = context_resolver
         self.street_resolver = street_resolver
         self.house_resolver = house_resolver
         self.landmark_resolver = landmark_resolver
+        self.address_suggestion_service = address_suggestion_service
 
         self.address_config = address_config
         # Префиксы улицы ("улица", "ул", "переулок", "пер", "проспект", "пр")
@@ -79,7 +84,7 @@ class AddressService:
 
     async def _resolve_by_street_and_house(
         self,
-        data,
+        data: NormalizedAddressInput,
     ) -> AddressMatchResult:
         """
         Алгоритм:
@@ -120,14 +125,31 @@ class AddressService:
             house_number=data.house,
         )
 
-        return self._finalize_candidates(
-            candidates=candidates,
-            not_found_reason="house_not_found",
+        if candidates:
+            return self._finalize_candidates(
+                candidates=candidates,
+                not_found_reason="house_not_found",
+            )
+        if len(streets) != 1:
+            return self._finalize_candidates(
+                candidates=candidates, not_found_reason="house_not_found"
+            )
+
+        street_id = streets[0].street.id
+
+        suggestions = await self.address_suggestion_service.suggest_house(
+            street_id=street_id, house_number=data.house, limit=3
+        )
+
+        return AddressMatchResult(
+            status=AddressStatus.NOT_FOUND,
+            reason="house_not_found",
+            suggestions=suggestions,
         )
 
     async def _resolve_by_landmark(
         self,
-        data,
+        data: NormalizedAddressInput,
     ) -> AddressMatchResult:
         """
         Алгоритм:
@@ -162,7 +184,7 @@ class AddressService:
 
     def _finalize_candidates(
         self,
-        candidates,
+        candidates: list[AddressCandidate],
         not_found_reason: str,
     ) -> AddressMatchResult:
         """
@@ -207,7 +229,7 @@ class AddressService:
 
     def _enrich_candidates_with_diff(
         self,
-        candidates,
+        candidates: list[AddressCandidate],
     ):
         """
         Добавляет информацию, чем отличаются

@@ -39,7 +39,7 @@ class PricingService:
 
             waypoint_price = self._resolve_price(waypoint_pricing)
 
-            total += int(waypoint_price * self.WAYPOINT_COEFFICIENT)
+            total += int(waypoint_price * self.waypoint_coefficient)
 
         return total
 

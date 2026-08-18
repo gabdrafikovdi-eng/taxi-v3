@@ -2,13 +2,16 @@
 
 Позволяет вводить адрес (улицу, дом, район, ориентир, город) и смотреть, как
 новый `AddressService` (ContextResolver -> StreetResolver -> HouseResolver /
-LandmarkResolver) его резолвит, с диагностикой по каждому этапу.
+LandmarkResolver -> AddressSuggestionService) его резолвит, с диагностикой по
+каждому этапу.
 
 Отличие от старого scripts/address_debug.py:
     - собирает новый `app/services/address/address_service.py:AddressService`
-      со всеми резолверами;
+      со всеми резолверами и `AddressSuggestionService`;
     - обязательное бизнес-правило нового сервиса: street + house ИЛИ landmark;
     - показывает нормализацию входа (включая срезку "ул."/"улица"/"пер."/...);
+    - показывает подбор похожих номеров домов (suggestions), когда точный дом
+      не найден;
     - проверяет наличие расширения pg_trgm (нужно для fuzzy-этапа).
 
 Примеры использования
@@ -60,6 +63,7 @@ from app.services.address.context_resolver import ContextResolver  # noqa: E402
 from app.services.address.house_resolver import HouseResolver  # noqa: E402
 from app.services.address.landmark_resolver import LandmarkResolver  # noqa: E402
 from app.services.address.street_resolver import StreetResolver  # noqa: E402
+from app.services.address.suggestion_service import AddressSuggestionService  # noqa: E402
 
 # Минимальные ANSI-цвета для статусов (только если вывод в терминал).
 _RESET = "\033[0m"
@@ -85,7 +89,7 @@ def _status_str(status: AddressStatus) -> str:
 
 
 def _build_service(repo: AddressRepository) -> AddressService:
-    """Собирает НОВЫЙ AddressService из резолверов."""
+    """Собирает НОВЫЙ AddressService из резолверов и suggestion-сервиса."""
     return AddressService(
         address_repo=repo,
         context_resolver=ContextResolver(
@@ -99,6 +103,7 @@ def _build_service(repo: AddressRepository) -> AddressService:
         ),
         house_resolver=HouseResolver(address_repo=repo),
         landmark_resolver=LandmarkResolver(address_repo=repo),
+        address_suggestion_service=AddressSuggestionService(address_repo=repo),
     )
 
 
@@ -201,6 +206,40 @@ async def _print_house_diag(
         )
 
 
+async def _print_suggestion_diag(
+    service: AddressService, streets, house_number: str
+) -> None:
+    """Показывает, какие похожие дома подобрал AddressSuggestionService.
+
+    Suggestions считаются только при одной найденной улице (иначе непонятно,
+    для какой из неоднозначных улиц искать похожие номера домов).
+    """
+    print(
+        f"\n{_GRAY}— Этап 3b: AddressSuggestionService "
+        f"(house={house_number!r}) —{_RESET}"
+    )
+    if len(streets) != 1:
+        print(
+            f"  пропущено: найдено улиц {len(streets)} "
+            "(для подбора похожих домов нужна ровно одна)"
+        )
+        return
+    suggestions = await service.address_suggestion_service.suggest_house(
+        street_id=streets[0].street.id,
+        house_number=house_number,
+        limit=3,
+    )
+    if not suggestions:
+        print("  похожих домов не найдено")
+        return
+    for c in suggestions:
+        print(
+            f"  {_GRAY}#{c.house_id}{_RESET} ул. {c.street_name}, "
+            f"д. {c.house_number} -> р-н {c.district_name} "
+            "(suggestion, НЕ resolved)"
+        )
+
+
 async def _print_landmark_diag(
     service: AddressService, district_ids, landmark_name: str
 ) -> None:
@@ -242,6 +281,14 @@ def _print_result(result) -> None:
             f" -> р-н {c.district_name}{diff}"
         )
         print(line)
+    if result.suggestions:
+        print()
+        print(f"  {_GRAY}— suggestions (похожие номера домов, НЕ resolved) —{_RESET}")
+        for i, c in enumerate(result.suggestions, start=1):
+            print(
+                f"  {i}. ул. {c.street_name}, д. {c.house_number}"
+                f" -> р-н {c.district_name}"
+            )
 
 
 def _dump_model(model, title: str) -> None:
@@ -281,6 +328,7 @@ async def _run_case(
             )
             if streets:
                 await _print_house_diag(service, streets, normalized.house)
+                await _print_suggestion_diag(service, streets, normalized.house)
     else:
         print(
             f"\n{_GRAY}(правило сервиса: street+house ИЛИ landmark — "
