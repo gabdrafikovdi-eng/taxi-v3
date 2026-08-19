@@ -14,7 +14,7 @@ from app.models.order import Order
 from app.models.order_state import ACTIVE_ORDER_STATES, OrderState
 from app.repositories.order_repo import OrderRepository
 from app.schemas.address import AddressCandidate, AddressInput, AddressStatus
-from app.services.address_service import AddressService
+from app.services.address.address_service import AddressService
 from app.services.pricing_service import PricingService
 from app.services.state_service import StateService
 
@@ -66,13 +66,17 @@ class OrderService:
                 current_state=order.state,
                 attemted_action="set_pickup",
             )
-        address_result = await self.address_service.resolve_address(address_data)
+
+        address_result = await self.address_service.resolve_address(
+            address=address_data
+        )
 
         match address_result.status:
             case AddressStatus.NOT_FOUND:
                 raise AddressResolveError(
                     status=AddressStatus.NOT_FOUND,
-                    message="Не удалось найти указаный адрес",
+                    message=address_result.reason,
+                    suggestions=address_result.suggestions,
                 )
 
             case AddressStatus.AMBIGUOUS:
@@ -84,7 +88,7 @@ class OrderService:
             case AddressStatus.INCOMPLETE:
                 raise AddressResolveError(
                     status=AddressStatus.INCOMPLETE,
-                    message="Для установки адреса требуется пара street+house или landmark",
+                    message=address_result.reason,
                 )
 
             case AddressStatus.RESOLVED:
@@ -157,19 +161,20 @@ class OrderService:
             case AddressStatus.NOT_FOUND:
                 raise AddressResolveError(
                     status=AddressStatus.NOT_FOUND,
-                    message="Не удалось найти указаный адрес",
+                    message=address_result.reason,
+                    suggestions=address_result.suggestions,
                 )
 
             case AddressStatus.AMBIGUOUS:
                 raise AddressResolveError(
                     status=AddressStatus.AMBIGUOUS,
-                    message="Найдено несколько вариантов. Выберите один из предложенных",
+                    message=address_result.reason,
                     candidates=address_result.candidates,
                 )
             case AddressStatus.INCOMPLETE:
                 raise AddressResolveError(
                     status=AddressStatus.INCOMPLETE,
-                    message="Для установки адреса требуется пара street+house или landmark",
+                    message=address_result.reason,
                 )
 
             case AddressStatus.RESOLVED:

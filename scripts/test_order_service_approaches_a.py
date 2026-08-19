@@ -13,10 +13,26 @@
     cancel_order       -> StateService.transition (аналогично)
     set_waypoint_address -> ЗАГЛУШКА (OrderService.add_waypoint не реализован)
 
+Контракт со слоем app:
+    * LLM-инструменты валидируются реальными Pydantic-схемами
+      (AddressInput и наследники с order_id).
+    * Ошибки приходят из реальных исключений app.core.exceptions
+      (AddressResolveError / InvalidStateError / OrderNotFoundError /
+      PricingError / TooManyActiveOrdersError / InvalidTransitionError)
+      и маппятся в понятный LLM ответ.
+    * Только OrderService.set_pickup / set_destination / create_order —
+      реальная бизнес-логика; confirm/cancel/waypoint остаются
+      заглушками, т.к. соответствующих методов в OrderService нет.
+
 Запуск:
     uv run python scripts/test_order_service_approaches_a.py
 
 Требует: БД PostgreSQL с данными Аскарово и OPENAI_* настройки в .env.
+
+Address suggestions: похожие номера домов (suggestions) считает AddressService,
+OrderService прокидывает их в AddressResolveError.suggestions при NOT_FOUND,
+а скрипт добавляет их в текст ответа LLM (например, для «70 лет Октября 17к0»
+показываются 17к1/17к2/17к3).
 """
 
 from __future__ import annotations
@@ -68,6 +84,7 @@ load_env_file(PROJECT_ROOT / ".env")
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from app.core.config import address_config  # noqa: E402
 from app.core.database import Base, async_session_factory, engine  # noqa: E402
 from app.core.exceptions import (  # noqa: E402
     AddressResolveError,
@@ -75,13 +92,19 @@ from app.core.exceptions import (  # noqa: E402
     InvalidTransitionError,
     OrderNotFoundError,
     PricingError,
+    TooManyActiveOrdersError,
 )
 from app.models.call_session import CallChannel, CallSession  # noqa: E402
 from app.models.order_state import OrderState  # noqa: E402
 from app.repositories.address_repo import AddressRepository  # noqa: E402
 from app.repositories.order_repo import OrderRepository  # noqa: E402
 from app.schemas.address import AddressInput, AddressStatus  # noqa: E402
-from app.services.address_service import AddressService  # noqa: E402
+from app.services.address.address_service import AddressService  # noqa: E402
+from app.services.address.context_resolver import ContextResolver  # noqa: E402
+from app.services.address.house_resolver import HouseResolver  # noqa: E402
+from app.services.address.landmark_resolver import LandmarkResolver  # noqa: E402
+from app.services.address.street_resolver import StreetResolver  # noqa: E402
+from app.services.address.suggestion_service import AddressSuggestionService  # noqa: E402
 from app.services.order_service import OrderService  # noqa: E402
 from app.services.pricing_service import PricingService  # noqa: E402
 from app.services.state_service import StateService  # noqa: E402
@@ -89,13 +112,134 @@ from sqlalchemy import text  # noqa: E402
 from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
 
 # Промпт и базовые схемы (create/confirm/cancel) из эталонного скрипта.
-# Адресные схемы строим на базе готовой AddressInput из app.schemas.address.
-from tests.test_create_order_approaches import (  # noqa: E402
-    SYSTEM_PROMPT_A,
-    CancelOrderInputA,
-    ConfirmOrderInputA,
-    CreateOrderInput,
-)
+# Для адресных схем используем уже готовую AddressInput из app.schemas.address.
+SYSTEM_PROMPT_A = """Ты — диспетчер такси. Помоги пользователю заказать такси.
+
+Ты можешь:
+- оформить поездку;
+- указать адрес подачи;
+- указать адрес назначения;
+- добавить промежуточную остановку;
+- подтвердить заказ;
+- отменить заказ.
+
+Правила:
+1. Сначала вызови create_order, чтобы создать заказ
+2. Затем заполни адреса через set_pickup_address и set_destination_address
+3. Когда оба адреса установлены, спроси подтверждение
+4. При подтверждении вызови confirm_order
+5. Для нового заказа вызови create_order ещё раз
+6. Адрес передавай ЛИБО парой «street»+«house» одновременно, ЛИБО только
+   «landmark» (ориентир), но НИКОГДА не оба варианта сразу.
+7. НИКОГДА не выдумывай номер дома или ориентир. Если пользователь не назвал
+   номер дома или ориентир — переспроси его, не придумывай данные сам.
+### Справочник улиц Аскарово
+
+Используй этот список для нормализации названий улиц.
+
+Если пользовательское название отличается от названия в справочнике
+из-за ошибки распознавания речи, опечатки, склонения или небольшого
+фонетического искажения, определи наиболее вероятное название из
+справочника.
+
+В аргументе `street` всегда передавай каноническое название улицы
+из справочника, если можешь уверенно сопоставить его.
+
+Если уверенного сопоставления нет — НЕ выдумывай название и передай
+распознанное название как есть.
+
+Справочник:
+
+- Истамгалина
+- Бабича
+- Шаймуратова
+- Гагарина
+- Файзрахмана Мустафина
+- Ленина
+- Мира
+- Учалинская
+- Молодежная
+- Матросова
+- Кирова
+- Салавата Юлаева
+- Тангатарская
+- Партизанская
+- Колхозная
+- Южная
+- Горная
+- Комсомольская
+- Уральская
+- Шайхзады Бабича
+- Урал Батыра
+- Ак-Күлгин
+- Шакимана
+- Любимая
+- Комарова
+- 40 лет Победы
+- 70 лет Октября
+- Идиш
+- Дружбы
+- Пионерская
+- Рауфа Давлетова
+- Рихарда Зорге
+- Лесная
+- Октябрьская
+- Диамиграта Абдрахманова
+- Весенняя
+- Юности
+- Николая Гоголя
+- Емельяна Пугачёва
+- Малика Якшимбетова
+- Миптата Хакимова
+- Зайнаб Биишевой
+- Загира Исмагилова
+- Ишмухамета Мырзакаева
+- Мустая Карима
+- Сафи Истамгалина
+- Расуля Кужахметова
+- Фаттаха Ибрагимова
+- 60 лет Победы
+- Сосновая
+- Солнечная
+- Ишмурзы Хидиатова
+- Луговая
+- Рамазана Уметбаева
+- Фазиля Искандера
+- Курчатова
+- Сагиры Мишар
+- Бииш Батыра
+- Тукая
+- Целинная
+- 50 лет Победы
+- Пятая
+- Салавата Кадырова
+- Нажипа Асанбаева
+- Рами Гарипова
+- Валиахмета Сулейманова
+- Индиры Султанбаевой
+- Мисаля Муртасина
+- 8 Марта
+- 10 лет Победы
+- Абзелиловская
+- Александра Пушкина
+- Гайфуллы Сарбаева
+- Георгия Васева
+- Караташ
+- Кизильская
+- Кинзи Арсланова
+- Кыркты-Тау
+- Михаила Лермонтова
+- Мусы Джалиля
+- Нургали Фахретдинова
+- Сагиды Бердиной
+- Салимьяна Гайнуллина
+- Саляха Кулибая
+- Северная
+- Сергея Аксакова
+- Сергея Есенина
+- Центральная
+- Шакира Биккулова
+- Школьная"""
 
 # Дополнение к системному промпту варианта A: напоминаем LLM про town/district.
 SYSTEM_PROMPT_SERVICE = SYSTEM_PROMPT_A + """
@@ -116,6 +260,24 @@ class OrderIdInput(BaseModel):
     """order_id для tools варианта A (все операции выполняются по заказу)."""
 
     order_id: UUID = Field(..., description="ID заказа, полученный из create_order")
+
+
+class CreateOrderInput(BaseModel):
+    """create_order(): аргументов нет."""
+
+    pass
+
+
+class ConfirmOrderInputA(OrderIdInput):
+    """confirm_order(order_id)."""
+
+    pass
+
+
+class CancelOrderInputA(OrderIdInput):
+    """cancel_order(order_id)."""
+
+    pass
 
 
 class SetPickupAddressInputA(AddressInput, OrderIdInput):
@@ -293,6 +455,12 @@ async def handle_create_order(_args: CreateOrderInput, state: ServiceState) -> d
             call_session_id=state.call_session_id,
             idempotency_key=idempotency_key,
         )
+    except TooManyActiveOrdersError as exc:
+        logger.warning("create_order: достигнут лимит активных заказов: %s", exc)
+        return {
+            "status": "error",
+            "message": f"Достигнут лимит активных заказов: {exc}",
+        }
     except Exception as exc:  # noqa: BLE001 - ошибки возвращаем LLM
         logger.warning("create_order error: %s", exc)
         return {
@@ -324,8 +492,26 @@ def _addr_input_from_args(args: BaseModel) -> AddressInput:
         landmark=getattr(args, "landmark", None),
     )
 
+# Причины, которые AddressService кладёт в AddressResolveError.message
+# (в текущем OrderService для NOT_FOUND message = address_result.reason).
+_NOT_FOUND_REASON_TEXT: dict[str, str] = {
+    "town_or_district_not_found": "Не найден город или район.",
+    "street_not_found": "Не найдена улица.",
+    "house_not_found": "Не найден номер дома.",
+    "landmark_not_found": "Не найден ориентир.",
+}
+
+
 def _address_error_result(exc: AddressResolveError) -> dict:
-    """Превращает AddressResolveError в читаемый ответ для LLM."""
+    """Превращает AddressResolveError в читаемый ответ для LLM.
+
+    Работаем с реальными полями исключения:
+      * AMBIGUOUS  -> exc.candidates (список вариантов адресов)
+      * NOT_FOUND  -> exc.message (машинная причина от AddressService:
+                      house_not_found / street_not_found / ...)
+                      и exc.suggestions (похожие номера домов, которые
+                      OrderService прокинул из AddressMatchResult).
+    """
     if exc.status == AddressStatus.AMBIGUOUS:
         variants = [
             f"{i + 1}. {c.full_address}" for i, c in enumerate(exc.candidates or [])
@@ -335,12 +521,25 @@ def _address_error_result(exc: AddressResolveError) -> dict:
             "message": "Найдено несколько адресов, уточни район:\n" + "\n".join(variants),
         }
     if exc.status == AddressStatus.NOT_FOUND:
+        message = "Адрес не найден."
+        reason_text = _NOT_FOUND_REASON_TEXT.get(exc.message or "")
+        if reason_text:
+            message += f" {reason_text}"
+
+        suggestions = exc.suggestions or []
+        if suggestions:
+            variants = [
+                f"{i + 1}. {c.full_address}" for i, c in enumerate(suggestions)
+            ]
+            message += (
+                " Возможно, подойдёт похожий адрес:\n" + "\n".join(variants)
+            )
+        else:
+            message += " Проверь название улицы / номер дома и попробуй ещё раз."
+
         return {
             "status": "error",
-            "message": (
-                "Адрес не найден. Проверь название улицы / номер дома "
-                "и попробуй ещё раз."
-            ),
+            "message": message,
         }
     if exc.status == AddressStatus.INCOMPLETE:
         return {
@@ -706,7 +905,21 @@ async def main() -> None:
 
     address_repo = AddressRepository(session)
     order_repo = OrderRepository(session)
-    address_service = AddressService(address_repo)
+    address_service = AddressService(
+        address_repo=address_repo,
+        context_resolver=ContextResolver(
+            address_repo=address_repo,
+            default_town_name=address_config.default_town_name,
+        ),
+        street_resolver=StreetResolver(
+            address_repo=address_repo,
+            fuzzy_threshold=address_config.fuzzy_threshold,
+            max_candidate=address_config.max_candidates,
+        ),
+        house_resolver=HouseResolver(address_repo=address_repo),
+        landmark_resolver=LandmarkResolver(address_repo=address_repo),
+        address_suggestion_service=AddressSuggestionService(address_repo=address_repo),
+    )
     pricing_service = PricingService(address_repo)
     state_service = StateService()
     order_service = OrderService(

@@ -65,7 +65,7 @@ class AddressRepository:
         similarity_scrore = func.similarity(Street.name, name)
 
         stmt = (
-            select(Street, similarity_scrore.label("similiraty"))
+            select(Street, similarity_scrore.label("similarity"))
             .where(
                 Street.district_id.in_(district_ids),
                 similarity_scrore >= effective_threshold,

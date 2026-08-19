@@ -1,12 +1,12 @@
 # Address Database Snapshot
 
-- Generated at: 2026-08-18T14:34:19+05:00
+- Generated at: 2026-08-19T14:54:40+05:00
 - Database environment: localhost:5432/taxi-db
 - Towns: 1
 - Districts: 6
-- Streets: 145
-- Houses: 3366
-- Landmarks: 3
+- Streets: 144
+- Houses: 3365
+- Landmarks: 2
 - Schema revision (Alembic): `c5c0e0c33ff9`
 
 > Снимок формируется автоматически при каждом запуске ``scripts/generate_address_snapshot.py`` и отражает РЕАЛЬНОЕ состояние БД на момент запуска. Секреты/пароли/DSN не выводятся.
@@ -28,17 +28,17 @@
 |---|---:|
 | Towns | 1 |
 | Districts | 6 |
-| Streets | 145 |
-| Houses | 3366 |
-| Landmarks | 3 |
+| Streets | 144 |
+| Houses | 3365 |
+| Landmarks | 2 |
 | Street aliases (synonyms) | 0 |
-| House number groups | 2951 |
+| House number groups | 2950 |
 
 ## House number type breakdown
 
 | Type | Count |
 |---|---:|
-| PLAIN | 2874 |
+| PLAIN | 2873 |
 | LETTER | 118 |
 | CORPUS | 56 |
 | FRACTION | 317 |
@@ -178,9 +178,9 @@
 - ID: 4
 - Base price: 0
 - Districts: 6
-- Streets: 145
-- Houses: 3366
-- Landmarks: 3
+- Streets: 144
+- Houses: 3365
+- Landmarks: 2
 
 ---
 
@@ -192,9 +192,9 @@
 - Town: Аскарово
 - Town ID: 4
 - Price override: 200
-- Streets: 28
-- Houses: 719
-- Landmarks: 1
+- Streets: 27
+- Houses: 718
+- Landmarks: 0
 
 ## District: Восточный-2
 
@@ -448,16 +448,6 @@
 - Price override: —
 - Houses: 41
 - Landmarks: 0
-- Synonyms: —
-
-## Street: Сафи Истамгалина
-
-- ID: 439
-- Town: Аскарово (ID: 4)
-- District: Восточный-1 (ID: 22)
-- Price override: —
-- Houses: 1
-- Landmarks: 1
 - Synonyms: —
 
 ## Street: Сафы Истамгалина
@@ -1706,7 +1696,7 @@
 
 Все дома, сгруппированные по иерархии Town → District → Street. Для каждого номера показан результат существующего ``parse_house_number()``: base / type / suffix.
 
-Всего домов: **3366**.
+Всего домов: **3365**.
 
 ## Town: Аскарово (ID: 4)
 
@@ -2422,14 +2412,6 @@
 | 8787 | 38 | 38 | PLAIN | - |
 | 8788 | 39 | 39 | PLAIN | - |
 | 8790 | 40 | 40 | PLAIN | - |
-
-#### Street: Сафи Истамгалина (ID: 439)
-
-Кол-во домов: 1
-
-| House ID | Number | Base | Type | Suffix |
-|---|---|---|---|---|
-| 10094 | 31 | 31 | PLAIN | - |
 
 #### Street: Сафы Истамгалина (ID: 395)
 
@@ -6109,7 +6091,7 @@
 
 Дома, сгруппированные по (улица, base). Такие группы — источник реальных данных для тестов address resolution.
 
-Всего групп: **2951**.
+Всего групп: **2950**.
 
 ## 60 лет Победы / base=1
 
@@ -10342,14 +10324,6 @@
 - Street ID: 387
 
 - 40
-
-## Сафи Истамгалина / base=31
-
-- Town: Аскарово (ID: 4)
-- District: Восточный-1 (ID: 22)
-- Street ID: 439
-
-- 31
 
 ## Сафы Истамгалина / base=17
 
@@ -33704,16 +33678,7 @@
 
 Landmark может существовать без улицы/дома (это разрешено ORM: ``street_id`` nullable, ``house_id`` nullable) — в таких случаях вместо данных ставится «—».
 
-Всего ориентиров: **3**.
-
-## Landmark: Нижний Магнит
-
-- ID: 7
-- Street: Сафи Истамгалина (ID: 439)
-- House: 31 (ID: 10094)
-- District: Восточный-1 (ID: 22)
-- Town: Аскарово (ID: 4)
-- Description: —
+Всего ориентиров: **2**.
 
 ## Landmark: Районная больница
 
@@ -33755,7 +33720,7 @@ Town
 
 ### Town: Аскарово (ID: 4) — районов: 6
 
-└── District: Восточный-1 (ID: 22) — улиц: 28, домов: 719, ориентиров: 1
+└── District: Восточный-1 (ID: 22) — улиц: 27, домов: 718, ориентиров: 0
     └── Street: 60 лет Победы (ID: 335) — домов: 76, ориентиров: 0
     └── Street: Абзелиловская (ID: 338) — домов: 18, ориентиров: 0
     └── Street: Вафира Тайсина (ID: 343) — домов: 21, ориентиров: 0
@@ -33776,7 +33741,6 @@ Town
     └── Street: Николая Гоголя (ID: 436) — домов: 0, ориентиров: 0
     └── Street: Рамазана Уметбаева (ID: 386) — домов: 40, ориентиров: 0
     └── Street: Расуля Кужахметова (ID: 387) — домов: 41, ориентиров: 0
-    └── Street: Сафи Истамгалина (ID: 439) — домов: 1, ориентиров: 1
     └── Street: Сафы Истамгалина (ID: 395) — домов: 28, ориентиров: 0
     └── Street: Сосновая (ID: 398) — домов: 13, ориентиров: 0
     └── Street: Фаттаха Ибрагимова (ID: 409) — домов: 41, ориентиров: 0

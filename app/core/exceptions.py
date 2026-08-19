@@ -86,10 +86,12 @@ class AddressResolveError(DispatcherError):
         *,
         status: AddressStatus,
         candidates: list[AddressCandidate] | None = None,
+        suggestions: list[AddressCandidate] | None = None,
     ):
         self.message = message or self._default_message()
         self.status = status
         self.candidates = candidates or []
+        self.suggestions = suggestions or []
 
         code = (
             "ADDRESS_NOT_FOUND"
