@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from app.schemas.address import AddressCandidate, AddressStatus
 
 
@@ -44,6 +46,33 @@ class TooManyActiveOrdersError(DispatcherError):
         super().__init__(message, code="TOO_MANY_ACTIVE_ORDERS")
 
 
+class LimitWaypointError(DispatcherError):
+    def __init__(
+        self,
+        current_waypoint_count: int,
+        max_waypoint: int,
+    ) -> None:
+        self.current_waypoint_count = current_waypoint_count
+        self.max_waypoint = max_waypoint
+
+        message = (
+            f"Превышен лимит остановок: текущее количество {current_waypoint_count}, "
+            f"максимально допустимо {max_waypoint}"
+        )
+
+        super().__init__(message, code="WAYPOINT_LIMIT_EXCEEDED")
+
+
+class WaypointNotFoundError(DispatcherError):
+    def __init__(self, order_id: UUID, sequence_number: int) -> None:
+        self.order_id = order_id
+        self.sequence_number = sequence_number
+
+        message = f"Не удалось найти waypoint по индексу - {self.sequence_number}, order_id - {order_id}"
+
+        super().__init__(message=message, code="not_found_waypoint")
+
+
 class AddressValidationError(DispatcherError):
     def __init__(self, address_text, reason):
         self.address_text = address_text
@@ -88,10 +117,11 @@ class AddressResolveError(DispatcherError):
         candidates: list[AddressCandidate] | None = None,
         suggestions: list[AddressCandidate] | None = None,
     ):
-        self.message = message or self._default_message()
         self.status = status
         self.candidates = candidates or []
         self.suggestions = suggestions or []
+
+        self.message = message or self._default_message()
 
         code = (
             "ADDRESS_NOT_FOUND"
@@ -100,6 +130,15 @@ class AddressResolveError(DispatcherError):
         )
 
         super().__init__(self.message, code=code)
+
+    def _default_message(self) -> str:
+        if self.status == AddressStatus.NOT_FOUND:
+            return "Адрес не найден"
+
+        if self.status == AddressStatus.AMBIGUOUS:
+            return "Найдено несколько вариантов адресов. Уточните"
+
+        return "Ошибка разрешения адреса"
 
     def _default_message(self) -> str:
         if self.status == AddressStatus.NOT_FOUND:

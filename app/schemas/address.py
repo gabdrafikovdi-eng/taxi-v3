@@ -1,6 +1,7 @@
 from pydantic.config import ConfigDict
 from pydantic.fields import Field
 from pydantic import BaseModel
+from pydantic.functional_validators import field_validator
 from app.models.address import Street
 from enum import StrEnum
 
@@ -113,3 +114,38 @@ class HouseNumberParts(BaseModel):
     base: str
     type: HouseNumberType
     suffix: str | None = None
+
+
+class PassengerName(BaseModel):
+    first_name: str = Field(
+        ...,
+        description="Имя пассажира",
+        min_length=1,
+        max_length=100,
+    )
+
+    @field_validator("first_name")
+    @classmethod
+    def normalize_name(cls, value: str) -> str:
+        value = " ".join(value.split()).title()
+
+        if not value:
+            raise ValueError("Имя пассажира не может быть пустым")
+
+        return value
+
+
+class OrderComment(BaseModel):
+    comment: str = Field(
+        ..., description="Комментарий к заказу", min_length=1, max_length=300
+    )
+
+    @field_validator("comment")
+    @classmethod
+    def normazile_comment(cls, value: str) -> str:
+        value = " ".join(value.split())
+
+        if not value:
+            raise ValueError("Коментарий к заказу не может быть пустым")
+
+        return value

@@ -4,25 +4,35 @@
 Отличие от tests/test_create_order_approaches.py: in-memory хранилище
 заменено на реальные сервисы приложения + PostgreSQL.
 
-Используются только готовые функции:
-    create_order       -> OrderService.create_order
-    set_pickup_address -> OrderService.set_pickup
+Используются все пользовательские операции OrderService:
+    create_order            -> OrderService.create_order
+    set_pickup_address      -> OrderService.set_pickup
     set_destination_address -> OrderService.set_destination
-    confirm_order      -> StateService.transition (обёртка в скрипте;
-                            OrderService.confirm_order ещё не реализован)
-    cancel_order       -> StateService.transition (аналогично)
-    set_waypoint_address -> ЗАГЛУШКА (OrderService.add_waypoint не реализован)
+    set_waypoint_address    -> OrderService.add_waypoint        (ADD  )
+    update_waypoint_address -> OrderService.update_waypoint     (UPDATE)
+    remove_waypoint         -> OrderService.remove_waypoint     (REMOVE)
+    set_passenger_name      -> OrderService.set_passenger_name
+    set_comment             -> OrderService.set_comment
+    confirm_order           -> OrderService.confirm_order
+    cancel_order            -> OrderService.cancel_order
 
 Контракт со слоем app:
-    * LLM-инструменты валидируются реальными Pydantic-схемами
-      (AddressInput и наследники с order_id).
-    * Ошибки приходят из реальных исключений app.core.exceptions
-      (AddressResolveError / InvalidStateError / OrderNotFoundError /
-      PricingError / TooManyActiveOrdersError / InvalidTransitionError)
-      и маппятся в понятный LLM ответ.
-    * Только OrderService.set_pickup / set_destination / create_order —
-      реальная бизнес-логика; confirm/cancel/waypoint остаются
-      заглушками, т.к. соответствующих методов в OrderService нет.
+    * LLM-инструменты валидируются реальными Pydantic-схемами:
+        - AddressInput   (app.schemas.address) — для адресных операций;
+        - PassengerName  (app.schemas.address) — для имени пассажира;
+        - OrderComment   (app.schemas.address) — для комментария;
+        - SetPassengerNameInput (app.schemas.order) — tool schema set_passenger_name;
+        - SetCommentInput       (app.schemas.order) — tool schema set_comment.
+    * Не используются mock/in-memory реализации: только реальные
+      AddressRepository / OrderRepository / AddressService / PricingService /
+      StateService / OrderService / PostgreSQL.
+    * Ошибки приходят из реальных исключений app.core.exceptions и маппятся
+      в понятный LLM ответ.
+    * Все операции — реальная бизнес-логика OrderService, дублирования
+      алгоритмов внутри скрипта нет.
+    * remove_waypoint в OrderService ПЕРЕНУМЕРОВЫВАЕТ оставшиеся waypoint
+      (sequence_number 1..N в порядке возрастания). Скрипт это не дублирует,
+      а лишь показывает фактический результат.
 
 Запуск:
     uv run python scripts/test_order_service_approaches_a.py
@@ -90,15 +100,23 @@ from app.core.exceptions import (  # noqa: E402
     AddressResolveError,
     InvalidStateError,
     InvalidTransitionError,
+    LimitWaypointError,
     OrderNotFoundError,
     PricingError,
     TooManyActiveOrdersError,
+    WaypointNotFoundError,
 )
 from app.models.call_session import CallChannel, CallSession  # noqa: E402
 from app.models.order_state import OrderState  # noqa: E402
 from app.repositories.address_repo import AddressRepository  # noqa: E402
 from app.repositories.order_repo import OrderRepository  # noqa: E402
-from app.schemas.address import AddressInput, AddressStatus  # noqa: E402
+from app.schemas.address import (  # noqa: E402
+    AddressInput,
+    AddressStatus,
+    OrderComment,
+    PassengerName,
+)
+from app.schemas.order import SetCommentInput, SetPassengerNameInput  # noqa: E402
 from app.services.address.address_service import AddressService  # noqa: E402
 from app.services.address.context_resolver import ContextResolver  # noqa: E402
 from app.services.address.house_resolver import HouseResolver  # noqa: E402
@@ -119,7 +137,8 @@ SYSTEM_PROMPT_A = """Ты — диспетчер такси. Помоги пол
 - оформить поездку;
 - указать адрес подачи;
 - указать адрес назначения;
-- добавить промежуточную остановку;
+- добавить / изменить / удалить промежуточную остановку;
+- записать имя пассажира и комментарий;
 - подтвердить заказ;
 - отменить заказ.
 
@@ -133,6 +152,11 @@ SYSTEM_PROMPT_A = """Ты — диспетчер такси. Помоги пол
    «landmark» (ориентир), но НИКОГДА не оба варианта сразу.
 7. НИКОГДА не выдумывай номер дома или ориентир. Если пользователь не назвал
    номер дома или ориентир — переспроси его, не придумывай данные сам.
+8. Для НОВОЙ остановки используй set_waypoint_address; для ИЗМЕНЕНИЯ
+   существующей — update_waypoint_address(sequence_number=...); для удаления —
+   remove_waypoint(sequence_number=...). Никогда не добавляй новую остановку
+   вместо изменения существующей.
+9. Передавай name через set_passenger_name, комментарий — через set_comment.
 ### Справочник улиц Аскарово
 
 Используй этот список для нормализации названий улиц.
@@ -249,6 +273,39 @@ SYSTEM_PROMPT_SERVICE = SYSTEM_PROMPT_A + """
 - Если улица есть в нескольких районах (например «Ленина») и район не назван —
   уточни его у пользователя и передай в district.
 - town передавать не обязательно: по умолчанию подставляется «Аскарово».
+
+### Промежуточные остановки (waypoint)
+- Новая остановка -> set_waypoint_address (OrderService.add_waypoint).
+- Изменение существующей -> update_waypoint_address. Обязательно передай
+  sequence_number той остановки, которую надо заменить.
+  Примеры:
+    «измени первую остановку на больницу» -> update_waypoint_address(sequence_number=1)
+    «замени остановку номер 2»           -> update_waypoint_address(sequence_number=2)
+- Удаление существующей -> remove_waypoint(sequence_number).
+  Примеры:
+    «удали первую остановку» -> remove_waypoint(sequence_number=1)
+    «убери остановку»        -> если остановка одна: remove_waypoint(sequence_number=1)
+- Если остановок несколько, а пользователь говорит просто «удали остановку»
+  или «измени остановку» — уточни номер (sequence_number), НЕ выбирай сам.
+- Полный путь пользователя не задаёт номера stop'ов; их нужно брать из
+  последнего значения sequence_number, который вернул OrderService.
+  После удаления OrderService ПЕРЕНУМЕРОВЫВАЕТ оставшиеся (1,2,3,...),
+  поэтому числа меняются.
+- Никогда не используй set_waypoint_address (add) для изменения существующей
+  остановки и наоборот.
+
+### Имя пассажира и комментарий
+- «Меня зовут Дим», «запиши имя пассажира Иван» -> set_passenger_name(name=«Иван»).
+- «Комментарий: подъехать ко второму подъезду», «водителю нужно позвонить»
+  -> set_comment(comment=«...»).
+- Не изменяй имя/комментарий напрямую в order — только через эти tools.
+
+### Адресные ошибки (AddressService)
+- AMBIGUOUS: найдено несколько вариантов — покажи варианты пользователю,
+  попроси утончить район (district) и повтори set_*_address.
+- NOT_FOUND: покажи причину и, если в ответе есть suggestions, предложи
+  похожие варианты; попроси утончить адрес.
+- INCOMPLETE: попроси недостающие данные (street+house либо landmark).
 """
 
 # ---------------------------------------------------------------------------
@@ -323,7 +380,7 @@ class SetDestinationAddressInputA(AddressInput, OrderIdInput):
 
 
 class SetWaypointAddressInputA(AddressInput, OrderIdInput):
-    """set_waypoint_address: AddressInput + order_id (пока заглушка)."""
+    """set_waypoint_address: AddressInput + order_id."""
 
     town: str | None = Field(
         default=None, description="Город (необязательно; по умолчанию Аскарово)"
@@ -342,8 +399,48 @@ class SetWaypointAddressInputA(AddressInput, OrderIdInput):
         description="Ориентир вместо пары street+house (например: больница, магазин).",
     )
 
+
+class OrderScopedSequence(BaseModel):
+    """sequence_number для update/remove waypoint (реальный порядковый номер)."""
+
+    sequence_number: int = Field(
+        ...,
+        ge=1,
+        description="Порядковый номер остановки (sequence_number), как вернул OrderService.",
+    )
+
+
+class UpdateWaypointAddressInputA(AddressInput, OrderIdInput, OrderScopedSequence):
+    """update_waypoint_address: заменить существующую остановку (AddressInput + order_id + sequence)."""
+
+    town: str | None = Field(
+        default=None, description="Город (необязательно; по умолчанию Аскарово)"
+    )
+    district: str | None = Field(
+        default=None,
+        description="Район города (например: Центр, Северный, Южный, Восточный-1, Восточный-2, Даутово)",
+    )
+    street: str | None = Field(
+        default=None,
+        description="Улица (каноническое название из справочника). Если указана — нужен house.",
+    )
+    house: str | None = Field(default=None, description="Номер дома (если указана street).")
+    landmark: str | None = Field(
+        default=None,
+        description="Ориентир вместо пары street+house (например: больница, магазин).",
+    )
+
+
+class RemoveWaypointInputA(OrderIdInput, OrderScopedSequence):
+    """remove_waypoint: удалить остановку по sequence_number."""
+
+    pass
+
 # ---------------------------------------------------------------------------
 # Схемы tools (вариант A: create_order + адреса с order_id)
+# Для set_passenger_name / set_comment используем ГОТОВЫЕ схемы проекта:
+#   app.schemas.order.SetPassengerNameInput / SetCommentInput
+# (handler конвертирует их в PassengerName/OrderComment перед вызовом OrderService).
 # ---------------------------------------------------------------------------
 TOOLS_A: list[tuple[str, str, type[BaseModel]]] = [
     (
@@ -367,10 +464,35 @@ TOOLS_A: list[tuple[str, str, type[BaseModel]]] = [
     ),
     (
         "set_waypoint_address",
-        "Установить адрес остановки (промежуточная точка) для заказа. "
+        "ДОБАВИТЬ новую остановку (промежуточную точку) в конец маршрута. "
+        "Используй ТОЛЬКО для новой остановки. Для изменения/удаления "
+        "существующей используй update_waypoint_address / remove_waypoint. "
         "Адрес: либо street+house одновременно, либо ТОЛЬКО landmark. "
         "Не выдумывай номер дома — если его нет, переспроси.",
         SetWaypointAddressInputA,
+    ),
+    (
+        "update_waypoint_address",
+        "ИЗМЕНИТЬ существующую остановку. Передай sequence_number той "
+        "остановки, которую нужно заменить, и новый адрес "
+        "(street+house либо landmark). Не добавляй новую остановку.",
+        UpdateWaypointAddressInputA,
+    ),
+    (
+        "remove_waypoint",
+        "УДАЛИТЬ существующую остановку по sequence_number. "
+        "После удаления оставшиеся waypoint перенумеровываются OrderService.",
+        RemoveWaypointInputA,
+    ),
+    (
+        "set_passenger_name",
+        "Записать имя пассажира для заказа.",
+        SetPassengerNameInput,
+    ),
+    (
+        "set_comment",
+        "Записать комментарий к заказу для водителя.",
+        SetCommentInput,
     ),
     (
         "confirm_order",
@@ -635,36 +757,191 @@ async def handle_set_destination(
 async def handle_set_waypoint(
     args: SetWaypointAddressInputA, state: ServiceState
 ) -> dict:
-    """ЗАГЛУШКА: OrderService.add_waypoint ещё не реализован."""
-    return {
-        "status": "info",
-        "message": (
-            "Промежуточные остановки пока не поддерживаются (заглушка). "
-            "Метод add_waypoint в OrderService ещё не реализован."
-        ),
-    }
-
-async def _transition_order(
-    state: ServiceState, order_id: UUID, target: OrderState
-) -> dict:
-    """Обёртка над готовым StateService: OrderService.confirm_order
-    и OrderService.cancel_order ещё не реализованы."""
-    order = await state.order_repo.get_by_id(order_id)
-    if order is None:
+    """set_waypoint_address() через OrderService.add_waypoint (реальная логика)."""
+    address = _addr_input_from_args(args)
+    try:
+        order = await state.order_service.add_waypoint(args.order_id, address)
+    except OrderNotFoundError:
         return {
             "status": "error",
             "message": "Заказ не найден. Сначала вызови create_order.",
         }
+    except InvalidStateError as exc:
+        return {
+            "status": "error",
+            "message": f"Операция недопустима в текущем состоянии заказа: {exc}",
+        }
+    except LimitWaypointError as exc:
+        return {
+            "status": "error",
+            "message": f"Превышен лимит промежуточных остановок: {exc}",
+        }
+    except AddressResolveError as exc:
+        return _address_error_result(exc)
+    except PricingError as exc:
+        return {
+            "status": "error",
+            "message": f"Не удалось рассчитать цену поездки: {exc}",
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("set_waypoint unresolved error")
+        return {
+            "status": "error",
+            "message": f"Внутренняя ошибка при установке остановки: {exc}",
+        }
 
+    return _waypoint_summary("Остановка добавлена.", order=order, order_id=order.id)
+
+
+def _waypoint_parts(order) -> list[str]:
+    """Список строк «sequence_number. адрес» для фактических waypoint заказа."""
+    waypoints = sorted(order.waypoints, key=lambda wp: wp.sequence_number)
+    return [
+        f"{wp.sequence_number}. {' '.join(p for p in (wp.waypoint_street, wp.waypoint_house) if p)}"
+        for wp in waypoints
+    ]
+
+
+def _waypoint_summary(prefix: str, order, order_id: UUID) -> dict:
+    """Формирует success-ответ для add/update/remove waypoint с реальными данными order."""
+    parts = _waypoint_parts(order)
+    message = prefix
+    if parts:
+        message += f" Промежуточные точки: {'; '.join(parts)}"
+    else:
+        message += " Промежуточных остановок больше нет."
+    if getattr(order, "price", None) is not None:
+        message += f". Стоимость поездки: {order.price} руб."
+    elif order.has_both_addresses and not order.is_priced:
+        message += ". Цена пока не рассчитана."
+    return {"status": "success", "message": message, "order_id": str(order_id)}
+
+
+async def handle_update_waypoint(
+    args: UpdateWaypointAddressInputA, state: ServiceState
+) -> dict:
+    """update_waypoint_address() через OrderService.update_waypoint (реальная логика)."""
+    address = _addr_input_from_args(args)
     try:
-        state.state_service.transition(order, target)
+        order = await state.order_service.update_waypoint(
+            args.order_id, args.sequence_number, address
+        )
+    except OrderNotFoundError:
+        return {"status": "error", "message": "Заказ не найден. Сначала вызови create_order."}
+    except InvalidStateError as exc:
+        return {
+            "status": "error",
+            "message": f"Операция недопустима в текущем состоянии заказа: {exc}",
+        }
+    except WaypointNotFoundError as exc:
+        return {
+            "status": "error",
+            "message": f"Остановка с номером {args.sequence_number} не найдена: {exc}",
+        }
+    except AddressResolveError as exc:
+        return _address_error_result(exc)
+    except PricingError as exc:
+        return {"status": "error", "message": f"Не удалось рассчитать цену поездки: {exc}"}
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("update_waypoint unresolved error")
+        return {"status": "error", "message": f"Внутренняя ошибка при изменении остановки: {exc}"}
+
+    return _waypoint_summary(
+        f"Остановка {args.sequence_number} изменена.", order=order, order_id=order.id
+    )
+
+
+async def handle_remove_waypoint(args: RemoveWaypointInputA, state: ServiceState) -> dict:
+    """remove_waypoint() через OrderService.remove_waypoint (реальная логика)."""
+    try:
+        order = await state.order_service.remove_waypoint(args.order_id, args.sequence_number)
+    except OrderNotFoundError:
+        return {"status": "error", "message": "Заказ не найден. Сначала вызови create_order."}
+    except InvalidStateError as exc:
+        return {
+            "status": "error",
+            "message": f"Операция недопустима в текущем состоянии заказа: {exc}",
+        }
+    except WaypointNotFoundError as exc:
+        return {
+            "status": "error",
+            "message": f"Остановка с номером {args.sequence_number} не найдена: {exc}",
+        }
+    except PricingError as exc:
+        return {"status": "error", "message": f"Не удалось рассчитать цену поездки: {exc}"}
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("remove_waypoint unresolved error")
+        return {"status": "error", "message": f"Внутренняя ошибка при удалении остановки: {exc}"}
+
+    return _waypoint_summary(
+        f"Остановка {args.sequence_number} удалена. Оставшиеся waypoint перенумерованы OrderService.",
+        order=order,
+        order_id=order.id,
+    )
+
+
+async def handle_set_passenger_name(args: SetPassengerNameInput, state: ServiceState) -> dict:
+    """set_passenger_name() через OrderService (реальная логика)."""
+    try:
+        order = await state.order_service.set_passenger_name(
+            args.order_id, PassengerName(first_name=args.name)
+        )
+    except OrderNotFoundError:
+        return {"status": "error", "message": "Заказ не найден. Сначала вызови create_order."}
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("set_passenger_name unresolved error")
+        return {"status": "error", "message": f"Внутренняя ошибка при записи имени: {exc}"}
+
+    return {
+        "status": "success",
+        "message": f"Имя пассажира установлено: {order.passenger_name}",
+        "order_id": str(order.id),
+    }
+
+
+async def handle_set_comment(args: SetCommentInput, state: ServiceState) -> dict:
+    """set_comment() через OrderService (реальная логика)."""
+    try:
+        order = await state.order_service.set_comment(
+            args.order_id, OrderComment(comment=args.comment)
+        )
+    except OrderNotFoundError:
+        return {"status": "error", "message": "Заказ не найден. Сначала вызови create_order."}
+    except InvalidStateError as exc:
+        return {
+            "status": "error",
+            "message": f"Операция недопустима в текущем состоянии заказа: {exc}",
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("set_comment unresolved error")
+        return {"status": "error", "message": f"Внутренняя ошибка при записи комментария: {exc}"}
+
+    return {
+        "status": "success",
+        "message": f"Комментарий к заказу установлен: {order.comment}",
+        "order_id": str(order.id),
+    }
+
+
+async def _transition_order(
+    state: ServiceState, order_id: UUID, target: OrderState
+) -> dict:
+    """Подтверждение/отмена через реальные OrderService.confirm_order/cancel_order."""
+    try:
+        if target == OrderState.CONFIRMED:
+            order = await state.order_service.confirm_order(order_id)
+        else:
+            order = await state.order_service.cancel_order(order_id)
+    except OrderNotFoundError:
+        return {
+            "status": "error",
+            "message": "Заказ не найден. Сначала вызови create_order.",
+        }
     except InvalidTransitionError as exc:
         return {"status": "error", "message": f"Нельзя перевести заказ: {exc}"}
     except Exception as exc:  # noqa: BLE001
         logger.exception("transition error")
         return {"status": "error", "message": f"Ошибка перевода заказа: {exc}"}
-
-    await state.order_repo.commit()
 
     label = "подтверждён" if target == OrderState.CONFIRMED else "отменён"
     price_part = f". Стоимость: {order.price} руб." if order.price else ""
@@ -689,6 +966,10 @@ def build_handlers() -> dict[str, ToolHandler]:
         "set_pickup_address": handle_set_pickup,
         "set_destination_address": handle_set_destination,
         "set_waypoint_address": handle_set_waypoint,
+        "update_waypoint_address": handle_update_waypoint,
+        "remove_waypoint": handle_remove_waypoint,
+        "set_passenger_name": handle_set_passenger_name,
+        "set_comment": handle_set_comment,
         "confirm_order": handle_confirm_order,
         "cancel_order": handle_cancel_order,
     }

@@ -84,7 +84,7 @@ class Order(Base, TimestampMixin):
         String(64), unique=True, nullable=True
     )
     waypoints: Mapped[list["Waypoint"]] = relationship(
-        "Waypoint", back_populates="order"
+        "Waypoint", back_populates="order", cascade="all, delete-orphan"
     )
     driver_id: Mapped[UUID | None] = mapped_column(nullable=True)
     driver_assigned_at: Mapped[datetime | None] = mapped_column(

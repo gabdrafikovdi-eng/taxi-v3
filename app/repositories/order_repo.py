@@ -6,7 +6,7 @@ from sqlalchemy.orm import selectinload
 
 
 from app.models.call_session import CallSession
-from app.models.order import Order
+from app.models.order import Order, Waypoint
 from app.models.order_state import ACTIVE_ORDER_STATES, OrderState
 
 
@@ -68,11 +68,23 @@ class OrderRepository:
         # Кто вызывает: OrderService.create_order.
         self.session.add(order)
 
+    async def delete_waypoint(self, waypoint: Waypoint) -> None:
+        await self.session.delete(waypoint)
+
     async def commit(self) -> None:
         await self.session.commit()
 
-    async def refresh(self) -> None:
-        await self.session.refresh()
+    async def refresh_order(self, order: Order) -> None:
+        await self.session.refresh(order)
+
+    async def refresh_with_waypoints(self, order: Order) -> None:
+        await self.session.refresh(
+            order,
+            attribute_names=["waypoints"],
+        )
+
+    async def flush(self) -> None:
+        await self.session.flush()
 
     async def rollback(self) -> None:
         await self.session.rollback()
