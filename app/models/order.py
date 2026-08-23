@@ -2,7 +2,7 @@ from datetime import datetime
 from uuid import UUID, uuid4
 
 
-from sqlalchemy import DateTime, ForeignKey, String, Enum, Uuid, func
+from sqlalchemy import DateTime, ForeignKey, String, Enum, Uuid, func, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base, TimestampMixin
@@ -13,6 +13,7 @@ class Order(Base, TimestampMixin):
     __tablename__ = "orders"
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    order_number: Mapped[int] = mapped_column(nullable=False)
     call_session_id: Mapped[UUID] = mapped_column(
         ForeignKey("call_sessions.id", ondelete="RESTRICT"), index=True, nullable=False
     )
@@ -98,6 +99,14 @@ class Order(Base, TimestampMixin):
     )
 
     __mapper_args__ = {"version_id_col": version}
+
+    __table_args__ = (
+        UniqueConstraint(
+            "call_session_id",
+            "order_number",
+            name="uq_orders_call_session_order_number",
+        ),
+    )
 
     @property
     def has_both_addresses(self) -> bool:

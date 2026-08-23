@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio.session import AsyncSession
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import selectinload
 
 
@@ -88,3 +88,40 @@ class OrderRepository:
 
     async def rollback(self) -> None:
         await self.session.rollback()
+
+    async def get_next_order_number(self, call_session_id: UUID) -> int | None:
+        """
+        Блокирует строку call_sessions и возвращает следующий номер заказа.
+        Вызывать внутри транзакции (перед commit создания заказа).
+        """
+        # 1. Блокируем строку сессии, чтобы другие транзакции не могли параллельно создать заказ
+        lock_stmt = (
+            select(CallSession.id)
+            .where(CallSession.id == call_session_id)
+            .with_for_update()
+        )
+        lock_result = await self.session.execute(lock_stmt)
+
+        if lock_result.scalar_one_or_none() is None:
+            return None
+
+        # 2. Находим максимальный существующий номер для этой сессии
+        max_stmt = select(func.max(Order.order_number)).where(
+            Order.call_session_id == call_session_id
+        )
+        max_result = await self.session.execute(max_stmt)
+        max_number = max_result.scalar_one_or_none()
+
+        return (max_number or 0) + 1
+
+    async def get_by_order_number(
+        self,
+        call_session_id: UUID,
+        order_number: int,
+    ) -> Order | None:
+        stmt = select(Order).where(
+            Order.call_session_id == call_session_id, Order.order_number == order_number
+        )
+        result = await self.session.execute(stmt)
+
+        return result.scalar_one_or_none()

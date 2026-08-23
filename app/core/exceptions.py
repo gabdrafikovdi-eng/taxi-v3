@@ -70,7 +70,7 @@ class WaypointNotFoundError(DispatcherError):
 
         message = f"Не удалось найти waypoint по индексу - {self.sequence_number}, order_id - {order_id}"
 
-        super().__init__(message=message, code="not_found_waypoint")
+        super().__init__(message=message, code="WAYPOINT_NOT_FOUND")
 
 
 class AddressValidationError(DispatcherError):
@@ -81,7 +81,7 @@ class AddressValidationError(DispatcherError):
         if reason is not None:
             message += f" Причина: {reason}"
 
-        super().__init__(message, code="ADDRESS_VALIDATION")
+        super().__init__(message, code="VALIDATION_ERROR")
 
 
 class InvalidStateError(DispatcherError):
@@ -123,11 +123,12 @@ class AddressResolveError(DispatcherError):
 
         self.message = message or self._default_message()
 
-        code = (
-            "ADDRESS_NOT_FOUND"
-            if self.status == AddressStatus.NOT_FOUND
-            else "ADDRESS_AMBIGUOUS"
-        )
+        if self.status == AddressStatus.NOT_FOUND:
+            code = "ADDRESS_NOT_FOUND"
+        elif self.status == AddressStatus.INCOMPLETE:
+            code = "ADDRESS_INCOMPLETE"
+        else:
+            code = "ADDRESS_AMBIGUOUS"
 
         super().__init__(self.message, code=code)
 
@@ -140,10 +141,11 @@ class AddressResolveError(DispatcherError):
 
         return "Ошибка разрешения адреса"
 
-    def _default_message(self) -> str:
-        if self.status == AddressStatus.NOT_FOUND:
-            return "Адрес не найден"
-        if self.status == AddressStatus.AMBIGUOUS:
-            return "Найдено несколько вариантов адресов. Уточните"
 
-        return "Ошибка разрешения адреса"
+class CallSessionNotFoundError(DispatcherError):
+    def __init__(self, call_session_id: UUID):
+        self.call_session_id = call_session_id
+
+        message = f"Не найден call_session по ID - {self.call_session_id}"
+
+        super().__init__(message=message, code="CALL_SESSION_ID_NOT_FOUND")

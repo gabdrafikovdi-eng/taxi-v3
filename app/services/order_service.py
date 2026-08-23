@@ -5,6 +5,7 @@ from uuid import UUID
 from app.core.database import config_settings
 from app.core.exceptions import (
     AddressResolveError,
+    CallSessionNotFoundError,
     InvalidStateError,
     LimitWaypointError,
     OrderNotFoundError,
@@ -45,9 +46,16 @@ class OrderService:
         self.max_retries = 3
 
     async def create_order(self, call_session_id: UUID, idempotency_key: str) -> Order:
-        orders: list[Order] = await self.order_repo.get_active_orders_by_call_session(
+        next_number = await self.order_repo.get_next_order_number(
+            call_session_id=call_session_id
+        )
+        if next_number is None:
+            raise CallSessionNotFoundError(call_session_id)
+
+        orders = await self.order_repo.get_active_orders_by_call_session(
             call_session_id
         )
+
         if len(orders) >= config_settings.MAX_ACTIVE_ORDERS:
             raise TooManyActiveOrdersError(
                 max_allowed=config_settings.MAX_ACTIVE_ORDERS
@@ -59,7 +67,11 @@ class OrderService:
             ):
                 return order
 
-        order = Order(call_session_id=call_session_id, idempotency_key=idempotency_key)
+        order = Order(
+            call_session_id=call_session_id,
+            idempotency_key=idempotency_key,
+            order_number=next_number,
+        )
         await self.order_repo.add(order)
 
         await self.order_repo.commit()
@@ -305,11 +317,9 @@ class OrderService:
                     )
 
                 if len(order.waypoints) >= self.config_settings.MAX_WAYPOINTS:
-                    raise (
-                        LimitWaypointError(
-                            current_waypoint_count=len(order.waypoints),
-                            max_waypoint=self.config_settings.MAX_WAYPOINTS,
-                        ),
+                    raise LimitWaypointError(
+                        current_waypoint_count=len(order.waypoints),
+                        max_waypoint=self.config_settings.MAX_WAYPOINTS,
                     )
 
                 sequence = len(order.waypoints) + 1
@@ -519,12 +529,12 @@ class OrderService:
     ) -> Order:
 
         for attempt in range(self.max_retries):
-            order = await self.order_repo.get_by_id(order_id=order_id)
-
-            if order is None:
-                raise OrderNotFoundError(order_id=order_id)
-
             try:
+                order = await self.order_repo.get_by_id(order_id=order_id)
+
+                if order is None:
+                    raise OrderNotFoundError(order_id=order_id)
+
                 order.passenger_name = name.first_name
                 await self.order_repo.commit()
                 return order
@@ -611,6 +621,21 @@ class OrderService:
                 await asyncio.sleep(0.3)
 
         raise RuntimeError("Не удалось выполнить операцию из-за конфликтов")
+
+    async def get_order_by_number(
+        self, call_session_id: UUID, order_number: int
+    ) -> Order:
+        order = await self.order_repo.get_by_order_number(
+            call_session_id=call_session_id, order_number=order_number
+        )
+
+        if order is None:
+            raise OrderNotFoundError(order_id=f"order_number = {order_number}")
+
+        return order
+
+    async def list_active_orders(self, call_session_id: UUID) -> list[Order]:
+        return await self.order_repo.get_active_orders_by_call_session(call_session_id)
 
     def _is_same_address(
         self, target: Any, candidate: AddressCandidate, prefix: str

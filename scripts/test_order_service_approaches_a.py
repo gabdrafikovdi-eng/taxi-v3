@@ -131,7 +131,7 @@ from sqlalchemy.ext.asyncio import AsyncSession  # noqa: E402
 
 # Промпт и базовые схемы (create/confirm/cancel) из эталонного скрипта.
 # Для адресных схем используем уже готовую AddressInput из app.schemas.address.
-SYSTEM_PROMPT_A = """Ты — диспетчер такси. Помоги пользователю заказать такси.
+SYSTEM_PROMPT_A2 = """Ты — диспетчер такси. Помоги пользователю заказать такси.
 
 Ты можешь:
 - оформить поездку;
@@ -265,8 +265,47 @@ SYSTEM_PROMPT_A = """Ты — диспетчер такси. Помоги пол
 - Шакира Биккулова
 - Школьная"""
 
+SYSTEM_PROMPT_A = """### Телефонный режим диспетчера
+
+Веди себя как живой диспетчер такси по телефону, а не как AI-ассистент.
+
+- Отвечай коротко: обычно 1 фраза или 1 вопрос.
+- Не используй списки, Markdown и длинные объяснения.
+- За один ход задавай только один необходимый вопрос.
+- Не повторяй уже известную информацию.
+- Не перечисляй свои возможности и функции.
+- Не называй tools, сервисы, API, order_id или внутреннюю логику.
+- Не объясняй пользователю, как ты работаешь.
+- Не показывай технические сообщения об ошибках.
+
+Если пользователь спрашивает «что ты умеешь?», «какие функции есть?»,
+«что ты можешь?» и т.п., не перечисляй возможности.
+
+Коротко ответь:
+«Могу оформить поездку. Откуда вас забрать?»
+
+Если заказ уже находится в процессе оформления, после такого вопроса
+верни разговор к текущему незавершённому вопросу.
+
+Если адрес неоднозначный, предложи варианты естественно и кратко:
+«Больница на Гагарина, 5 или на Ленина, 13?»
+
+Не превращай оформление заказа в анкету.
+Имя, комментарий и остановки спрашивай только если это необходимо
+или пользователь сам о них говорит.
+
+После сбора необходимых данных:
+«Ленина, 23 — Гагарина, 5. Всё верно?»
+
+После подтверждения:
+«Заказ подтверждён.»
+
+Главное: каждая реплика должна звучать естественно для телефонного
+разговора с диспетчером такси."""
 # Дополнение к системному промпту варианта A: напоминаем LLM про town/district.
-SYSTEM_PROMPT_SERVICE = SYSTEM_PROMPT_A + """
+SYSTEM_PROMPT_SERVICE = (
+    SYSTEM_PROMPT_A
+    + """
 
 ### Дополнительно (реальные сервисы)
 - В tools установки адреса доступны поля town и district.
@@ -307,6 +346,8 @@ SYSTEM_PROMPT_SERVICE = SYSTEM_PROMPT_A + """
   похожие варианты; попроси утончить адрес.
 - INCOMPLETE: попроси недостающие данные (street+house либо landmark).
 """
+)
+
 
 # ---------------------------------------------------------------------------
 # Схемы адресов для LLM — на основе готовой AddressInput из основного кода.
@@ -351,7 +392,9 @@ class SetPickupAddressInputA(AddressInput, OrderIdInput):
         default=None,
         description="Улица (каноническое название из справочника). Если указана — нужен house.",
     )
-    house: str | None = Field(default=None, description="Номер дома (если указана street).")
+    house: str | None = Field(
+        default=None, description="Номер дома (если указана street)."
+    )
     landmark: str | None = Field(
         default=None,
         description="Ориентир вместо пары street+house (например: больница, магазин).",
@@ -372,7 +415,9 @@ class SetDestinationAddressInputA(AddressInput, OrderIdInput):
         default=None,
         description="Улица (каноническое название из справочника). Если указана — нужен house.",
     )
-    house: str | None = Field(default=None, description="Номер дома (если указана street).")
+    house: str | None = Field(
+        default=None, description="Номер дома (если указана street)."
+    )
     landmark: str | None = Field(
         default=None,
         description="Ориентир вместо пары street+house (например: больница, магазин).",
@@ -393,7 +438,9 @@ class SetWaypointAddressInputA(AddressInput, OrderIdInput):
         default=None,
         description="Улица (каноническое название из справочника). Если указана — нужен house.",
     )
-    house: str | None = Field(default=None, description="Номер дома (если указана street).")
+    house: str | None = Field(
+        default=None, description="Номер дома (если указана street)."
+    )
     landmark: str | None = Field(
         default=None,
         description="Ориентир вместо пары street+house (например: больница, магазин).",
@@ -424,7 +471,9 @@ class UpdateWaypointAddressInputA(AddressInput, OrderIdInput, OrderScopedSequenc
         default=None,
         description="Улица (каноническое название из справочника). Если указана — нужен house.",
     )
-    house: str | None = Field(default=None, description="Номер дома (если указана street).")
+    house: str | None = Field(
+        default=None, description="Номер дома (если указана street)."
+    )
     landmark: str | None = Field(
         default=None,
         description="Ориентир вместо пары street+house (например: больница, магазин).",
@@ -435,6 +484,7 @@ class RemoveWaypointInputA(OrderIdInput, OrderScopedSequence):
     """remove_waypoint: удалить остановку по sequence_number."""
 
     pass
+
 
 # ---------------------------------------------------------------------------
 # Схемы tools (вариант A: create_order + адреса с order_id)
@@ -526,6 +576,7 @@ def build_tools_a() -> list[dict]:
 def build_tool_models() -> dict[str, type[BaseModel]]:
     return {name: model for name, _, model in TOOLS_A}
 
+
 # ---------------------------------------------------------------------------
 # Состояние диалога поверх реальной БД
 # ---------------------------------------------------------------------------
@@ -614,6 +665,7 @@ def _addr_input_from_args(args: BaseModel) -> AddressInput:
         landmark=getattr(args, "landmark", None),
     )
 
+
 # Причины, которые AddressService кладёт в AddressResolveError.message
 # (в текущем OrderService для NOT_FOUND message = address_result.reason).
 _NOT_FOUND_REASON_TEXT: dict[str, str] = {
@@ -640,7 +692,8 @@ def _address_error_result(exc: AddressResolveError) -> dict:
         ]
         return {
             "status": "error",
-            "message": "Найдено несколько адресов, уточни район:\n" + "\n".join(variants),
+            "message": "Найдено несколько адресов, уточни район:\n"
+            + "\n".join(variants),
         }
     if exc.status == AddressStatus.NOT_FOUND:
         message = "Адрес не найден."
@@ -650,12 +703,8 @@ def _address_error_result(exc: AddressResolveError) -> dict:
 
         suggestions = exc.suggestions or []
         if suggestions:
-            variants = [
-                f"{i + 1}. {c.full_address}" for i, c in enumerate(suggestions)
-            ]
-            message += (
-                " Возможно, подойдёт похожий адрес:\n" + "\n".join(variants)
-            )
+            variants = [f"{i + 1}. {c.full_address}" for i, c in enumerate(suggestions)]
+            message += " Возможно, подойдёт похожий адрес:\n" + "\n".join(variants)
         else:
             message += " Проверь название улицы / номер дома и попробуй ещё раз."
 
@@ -827,7 +876,10 @@ async def handle_update_waypoint(
             args.order_id, args.sequence_number, address
         )
     except OrderNotFoundError:
-        return {"status": "error", "message": "Заказ не найден. Сначала вызови create_order."}
+        return {
+            "status": "error",
+            "message": "Заказ не найден. Сначала вызови create_order.",
+        }
     except InvalidStateError as exc:
         return {
             "status": "error",
@@ -841,22 +893,35 @@ async def handle_update_waypoint(
     except AddressResolveError as exc:
         return _address_error_result(exc)
     except PricingError as exc:
-        return {"status": "error", "message": f"Не удалось рассчитать цену поездки: {exc}"}
+        return {
+            "status": "error",
+            "message": f"Не удалось рассчитать цену поездки: {exc}",
+        }
     except Exception as exc:  # noqa: BLE001
         logger.exception("update_waypoint unresolved error")
-        return {"status": "error", "message": f"Внутренняя ошибка при изменении остановки: {exc}"}
+        return {
+            "status": "error",
+            "message": f"Внутренняя ошибка при изменении остановки: {exc}",
+        }
 
     return _waypoint_summary(
         f"Остановка {args.sequence_number} изменена.", order=order, order_id=order.id
     )
 
 
-async def handle_remove_waypoint(args: RemoveWaypointInputA, state: ServiceState) -> dict:
+async def handle_remove_waypoint(
+    args: RemoveWaypointInputA, state: ServiceState
+) -> dict:
     """remove_waypoint() через OrderService.remove_waypoint (реальная логика)."""
     try:
-        order = await state.order_service.remove_waypoint(args.order_id, args.sequence_number)
+        order = await state.order_service.remove_waypoint(
+            args.order_id, args.sequence_number
+        )
     except OrderNotFoundError:
-        return {"status": "error", "message": "Заказ не найден. Сначала вызови create_order."}
+        return {
+            "status": "error",
+            "message": "Заказ не найден. Сначала вызови create_order.",
+        }
     except InvalidStateError as exc:
         return {
             "status": "error",
@@ -868,10 +933,16 @@ async def handle_remove_waypoint(args: RemoveWaypointInputA, state: ServiceState
             "message": f"Остановка с номером {args.sequence_number} не найдена: {exc}",
         }
     except PricingError as exc:
-        return {"status": "error", "message": f"Не удалось рассчитать цену поездки: {exc}"}
+        return {
+            "status": "error",
+            "message": f"Не удалось рассчитать цену поездки: {exc}",
+        }
     except Exception as exc:  # noqa: BLE001
         logger.exception("remove_waypoint unresolved error")
-        return {"status": "error", "message": f"Внутренняя ошибка при удалении остановки: {exc}"}
+        return {
+            "status": "error",
+            "message": f"Внутренняя ошибка при удалении остановки: {exc}",
+        }
 
     return _waypoint_summary(
         f"Остановка {args.sequence_number} удалена. Оставшиеся waypoint перенумерованы OrderService.",
@@ -880,17 +951,25 @@ async def handle_remove_waypoint(args: RemoveWaypointInputA, state: ServiceState
     )
 
 
-async def handle_set_passenger_name(args: SetPassengerNameInput, state: ServiceState) -> dict:
+async def handle_set_passenger_name(
+    args: SetPassengerNameInput, state: ServiceState
+) -> dict:
     """set_passenger_name() через OrderService (реальная логика)."""
     try:
         order = await state.order_service.set_passenger_name(
             args.order_id, PassengerName(first_name=args.name)
         )
     except OrderNotFoundError:
-        return {"status": "error", "message": "Заказ не найден. Сначала вызови create_order."}
+        return {
+            "status": "error",
+            "message": "Заказ не найден. Сначала вызови create_order.",
+        }
     except Exception as exc:  # noqa: BLE001
         logger.exception("set_passenger_name unresolved error")
-        return {"status": "error", "message": f"Внутренняя ошибка при записи имени: {exc}"}
+        return {
+            "status": "error",
+            "message": f"Внутренняя ошибка при записи имени: {exc}",
+        }
 
     return {
         "status": "success",
@@ -906,7 +985,10 @@ async def handle_set_comment(args: SetCommentInput, state: ServiceState) -> dict
             args.order_id, OrderComment(comment=args.comment)
         )
     except OrderNotFoundError:
-        return {"status": "error", "message": "Заказ не найден. Сначала вызови create_order."}
+        return {
+            "status": "error",
+            "message": "Заказ не найден. Сначала вызови create_order.",
+        }
     except InvalidStateError as exc:
         return {
             "status": "error",
@@ -914,7 +996,10 @@ async def handle_set_comment(args: SetCommentInput, state: ServiceState) -> dict
         }
     except Exception as exc:  # noqa: BLE001
         logger.exception("set_comment unresolved error")
-        return {"status": "error", "message": f"Внутренняя ошибка при записи комментария: {exc}"}
+        return {
+            "status": "error",
+            "message": f"Внутренняя ошибка при записи комментария: {exc}",
+        }
 
     return {
         "status": "success",
@@ -973,6 +1058,7 @@ def build_handlers() -> dict[str, ToolHandler]:
         "confirm_order": handle_confirm_order,
         "cancel_order": handle_cancel_order,
     }
+
 
 # ---------------------------------------------------------------------------
 # Основной цикл диалога
@@ -1080,7 +1166,9 @@ async def process_user_message(
         state.history.append({"role": "assistant", "content": message.content or ""})
         return
 
-    logger.warning("Достигнут максимум итераций tool_calls (%d)", MAX_TOOL_CALL_ITERATIONS)
+    logger.warning(
+        "Достигнут максимум итераций tool_calls (%d)", MAX_TOOL_CALL_ITERATIONS
+    )
     print(f"\n⚠️  Достигнут максимум итераций tool_calls ({MAX_TOOL_CALL_ITERATIONS})")
 
 
@@ -1097,7 +1185,7 @@ async def run_interactive_dialog(
     while True:
         try:
             user_text = input("\n🧑 Вы: ").strip()
-        except (EOFError, KeyboardInterrupt):
+        except EOFError, KeyboardInterrupt:
             print()
             break
 
@@ -1109,6 +1197,7 @@ async def run_interactive_dialog(
         await process_user_message(
             client, model, state, tools, handlers, tool_models, user_text
         )
+
 
 # ---------------------------------------------------------------------------
 # Сводка
@@ -1140,12 +1229,20 @@ async def print_summary(state: ServiceState) -> None:
         if order is None:
             print(f"    {order_id}: <заказ не найден в БД>")
             continue
-        pickup = " ".join(
-            p for p in (order.pickup_street or "", order.pickup_house or "") if p
-        ) or "-"
-        destination = " ".join(
-            p for p in (order.destination_street or "", order.destination_house or "") if p
-        ) or "-"
+        pickup = (
+            " ".join(
+                p for p in (order.pickup_street or "", order.pickup_house or "") if p
+            )
+            or "-"
+        )
+        destination = (
+            " ".join(
+                p
+                for p in (order.destination_street or "", order.destination_house or "")
+                if p
+            )
+            or "-"
+        )
         print(
             f"    {order.id}: state={order.state.upper()}, "
             f'pickup="{pickup}", dest="{destination}", price={order.price}'
