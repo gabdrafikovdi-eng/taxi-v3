@@ -46,7 +46,7 @@ config_settings = Settings()
 class AddressConfig(BaseModel):
     base_town_id: int = 4
     base_district_id: int = 19
-    default_town_name: str = "аскарово"
+    default_town_name: str = "Аскарово"
     fuzzy_threshold: float = 0.4
     max_candidates: int = 5
     min_resolve_score: float = 0.9

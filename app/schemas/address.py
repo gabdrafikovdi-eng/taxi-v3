@@ -9,11 +9,26 @@ from enum import StrEnum
 class AddressInput(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    town: str | None = Field(default=None, description="")
-    district: str | None = Field(default=None, description="")
-    street: str | None = Field(default=None, description="")
-    house: str | None = Field(default=None, description="")
-    landmark: str | None = Field(default=None, description="")
+    town: str | None = Field(
+        default=None,
+        description="Город (необязательно, по умолчанию Аскарово)",
+    )
+    district: str | None = Field(
+        default=None,
+        description="Район города (например: Центр, Северный, Южный)",
+    )
+    street: str | None = Field(
+        default=None,
+        description="Улица (если указана — нужен house)",
+    )
+    house: str | None = Field(
+        default=None,
+        description="Номер дома (если указана street)",
+    )
+    landmark: str | None = Field(
+        default=None,
+        description="Ориентир вместо пары street+house (например: больница, магазин)",
+    )
 
 
 class NormalizedAddressInput(BaseModel):

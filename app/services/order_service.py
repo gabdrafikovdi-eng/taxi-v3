@@ -75,6 +75,7 @@ class OrderService:
         await self.order_repo.add(order)
 
         await self.order_repo.commit()
+        await self.order_repo.refresh_with_waypoints(order)
         return order
 
     async def set_pickup(self, order_id: UUID, address_data: AddressInput) -> Order:

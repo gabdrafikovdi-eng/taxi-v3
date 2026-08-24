@@ -40,27 +40,44 @@ class OrderRepository:
                 Order.call_session_id == call_session_id,
                 Order.state.in_(ACTIVE_ORDER_STATES),
             )
+            .options(selectinload(Order.waypoints))
             .order_by(Order.created_at.asc())
         )
         result = await self.session.execute(query)
 
         return list(result.scalars())
 
+    # async def get_incomplete_draft(self, call_session_id: UUID) -> Order | None:
+    #     # Зачем: найти DRAFT без обоих адресов.
+    #     # Зачем нужен: DynamicToolRegistry скрывает create_order,
+    #     #              пока есть незавершённый DRAFT.
+    #     # Фильтр: state=DRAFT AND (pickup_street_id IS NULL OR destination_street_id IS NULL)
+    #     # Кто вызывает: DynamicToolRegistry.
+    #     query = select(Order).where(
+    #         Order.call_session_id == call_session_id,
+    #         Order.state == OrderState.DRAFT,
+    #         or_(
+    #             Order.pickup_street_id.is_(None), Order.destination_street_id.is_(None)
+    #         ),
+    #     )
+    #     result = await self.session.execute(query)
+    #     return result.scalar_one_or_none()
     async def get_incomplete_draft(self, call_session_id: UUID) -> Order | None:
-        # Зачем: найти DRAFT без обоих адресов.
-        # Зачем нужен: DynamicToolRegistry скрывает create_order,
-        #              пока есть незавершённый DRAFT.
-        # Фильтр: state=DRAFT AND (pickup_street_id IS NULL OR destination_street_id IS NULL)
-        # Кто вызывает: DynamicToolRegistry.
-        query = select(Order).where(
-            Order.call_session_id == call_session_id,
-            Order.state == OrderState.DRAFT,
-            or_(
-                Order.pickup_street_id.is_(None), Order.destination_street_id.is_(None)
-            ),
+        query = (
+            select(Order)
+            .where(
+                Order.call_session_id == call_session_id,
+                Order.state == OrderState.DRAFT,
+                or_(
+                    Order.pickup_street_id.is_(None),
+                    Order.destination_street_id.is_(None),
+                ),
+            )
+            .options(selectinload(Order.waypoints))
+            .limit(1)
         )
         result = await self.session.execute(query)
-        return result.scalar_one_or_none()
+        return result.scalars().first()
 
     async def add(self, order: Order) -> None:
         # Зачем: добавить новый заказ в сессию SQLAlchemy.
@@ -119,8 +136,13 @@ class OrderRepository:
         call_session_id: UUID,
         order_number: int,
     ) -> Order | None:
-        stmt = select(Order).where(
-            Order.call_session_id == call_session_id, Order.order_number == order_number
+        stmt = (
+            select(Order)
+            .where(
+                Order.call_session_id == call_session_id,
+                Order.order_number == order_number,
+            )
+            .options(selectinload(Order.waypoints))
         )
         result = await self.session.execute(stmt)
 
