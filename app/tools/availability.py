@@ -1,4 +1,3 @@
-# app/tools/availability.py
 from uuid import UUID
 
 from app.repositories.order_repo import OrderRepository

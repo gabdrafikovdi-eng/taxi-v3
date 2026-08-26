@@ -1,4 +1,4 @@
-# app/tools/registry.py
+
 import logging
 from collections.abc import Mapping
 from uuid import UUID

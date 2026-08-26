@@ -41,10 +41,10 @@ async def main() -> None:
         llm_client = LLMClient()
         conversation = ConversationManager(llm_client, registry, availability)
 
-        print("\nВведите сообщение (или 'quit', 'q', 'выход' для выхода):")
+        print("\n\n Введите сообщение (или 'quit', 'q', 'выход' для выхода):")
         while True:
             try:
-                user_input = input("\n> ")
+                user_input = input("\n\n>  ")
             except EOFError, KeyboardInterrupt:
                 break
 

@@ -12,10 +12,10 @@ class LLMClient:
         model: str | None = None,
     ) -> None:
         self._client = AsyncOpenAI(
-            api_key=config_settings.OPENAI_API_KEY,
-            base_url=config_settings.OPENAI_BASE_URL,
+            api_key=config_settings.OPENAI_API_KEY or api_key,
+            base_url=config_settings.OPENAI_BASE_URL or base_url,
         )
-        self._model = config_settings.OPENAI_MODEL
+        self._model = config_settings.OPENAI_MODEL or model
 
     async def chat(
         self,

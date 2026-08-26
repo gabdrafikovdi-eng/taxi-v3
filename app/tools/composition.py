@@ -1,4 +1,3 @@
-# app/tools/composition.py
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.repositories.address_repo import AddressRepository
@@ -49,7 +48,6 @@ def build_order_service(session: AsyncSession) -> OrderService:
     address_suggestion_service = AddressSuggestionService(address_repo=address_repo)
     state_service = StateService()
 
-    # Подставь реальные зависимости для AddressService и PricingService
     address_service = AddressService(
         address_repo=address_repo,
         context_resolver=context_resolver,

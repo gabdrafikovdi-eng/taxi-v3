@@ -25,3 +25,10 @@ class CallSessionRepository:
         # Зачем: установить ended_at при завершении звонка.
         call_session.ended_at = datetime.now(UTC)
         self.session.add(call_session)
+
+    async def get_by_external_id(self, external_id: str) -> CallSession | None:
+        stmt = select(CallSession).where(CallSession.external_call_id == external_id)
+
+        result = await self.session.execute(stmt)
+
+        return result.scalar_one_or_none()
