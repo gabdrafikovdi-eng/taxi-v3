@@ -1,5 +1,5 @@
 # app/llm/client.py
-import os
+
 from openai import AsyncOpenAI
 from app.core.config import config_settings
 
