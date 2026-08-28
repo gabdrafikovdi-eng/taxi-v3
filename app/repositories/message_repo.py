@@ -2,6 +2,7 @@ from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 from app.models.messages import Message, ToolCallRecord
 
 
@@ -15,6 +16,7 @@ class MessageRepository:
         query = (
             select(Message)
             .where(Message.call_session_id == call_session_id)
+            .options(selectinload(Message.tools_calls))
             .order_by(Message.sequence_number.asc())
         )
         result = await self.session.execute(query)
@@ -35,4 +37,4 @@ class MessageRepository:
         return 1 if max_sequence is None else max_sequence + 1
 
     async def add_tool_call(self, tool_call: ToolCallRecord) -> None:
-        await self.session.add(tool_call)
+        self.session.add(tool_call)

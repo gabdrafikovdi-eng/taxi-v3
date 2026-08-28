@@ -9,7 +9,7 @@ from sqlalchemy import (
     UniqueConstraint,
     Uuid,
 )
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base, TimestampMixin
 
@@ -44,6 +44,10 @@ class Message(Base, TimestampMixin):
         nullable=True,
     )
     name: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    tools_calls: Mapped[list["ToolCallRecord"]] = relationship(
+        back_populates="message",
+        cascade="all, delete-orphan",
+    )
 
     __table_args__ = (
         UniqueConstraint(
@@ -62,3 +66,20 @@ class ToolCallRecord(Base, TimestampMixin):
     tool_call_id: Mapped[str] = mapped_column(String(100), nullable=False)
     function_name: Mapped[str] = mapped_column(String(100), nullable=False)
     arguments: Mapped[str] = mapped_column(Text, nullable=False)
+    message: Mapped["Message"] = relationship(
+        back_populates="tools_calls",
+    )
+    thought_signature: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    reasoning_content: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True,
+    )
+
+    response_id: Mapped[str | None] = mapped_column(
+        String(200),
+        nullable=True,
+    )
