@@ -1,0 +1,1 @@
+"""Микросервис speech-service: STT (GigaAM) + TTS (Silero) + VAD (Silero)."""

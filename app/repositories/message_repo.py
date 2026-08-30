@@ -1,8 +1,9 @@
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from app.models.call_session import CallSession
 from app.models.messages import Message, ToolCallRecord
 
 
@@ -27,14 +28,19 @@ class MessageRepository:
         self.session.add(message)
 
     async def get_next_sequence_number(self, call_session_id: UUID) -> int:
-        # Зачем: каждый сообщение имеет порядковый номер.
-        # SELECT MAX(sequence_number) + 1
-        query = select(func.max(Message.sequence_number)).where(
-            Message.call_session_id == call_session_id
+        """
+        Атомарно инкрементирует счетчик сообщений для сессии.
+        UPDATE ... RETURNING гарантирует отсутствие race condition.
+        """
+        stmt = (
+            update(CallSession)
+            .where(CallSession.id == call_session_id)
+            .values(last_message_sequence=CallSession.last_message_sequence + 1)
+            .returning(CallSession.last_message_sequence)
         )
-        result = await self.session.execute(query)
-        max_sequence = result.scalar_one()
-        return 1 if max_sequence is None else max_sequence + 1
+
+        result = await self.session.execute(stmt)
+        return result.scalar_one()
 
     async def add_tool_call(self, tool_call: ToolCallRecord) -> None:
         self.session.add(tool_call)

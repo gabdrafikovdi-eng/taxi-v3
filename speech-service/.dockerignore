@@ -1,0 +1,12 @@
+# Исключаем лишнее из Docker-контекста при сборке образа.
+__pycache__/
+*.py[cod]
+*.egg-info/
+.build/
+dist/
+.venv/
+venv/
+.env
+.env.local
+.git/
+README.md.meta

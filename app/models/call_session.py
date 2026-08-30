@@ -64,6 +64,7 @@ class CallSession(Base, TimestampMixin):
         nullable=True,
     )
     unknown_attempts: Mapped[int] = mapped_column(default=0, nullable=False)
+    last_message_sequence: Mapped[int] = mapped_column(default=0, nullable=False)
 
     @property
     def is_active(self) -> bool:

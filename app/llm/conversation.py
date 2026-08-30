@@ -117,21 +117,21 @@ class ConversationManager:
 
                     await self._message_repo.add_tool_call(tool_call=tool_call_record)
 
-                    ctx = ToolContext(
-                        call_session_id=call_session_id,
-                        tool_call_id=tool_call.id,
-                    )
-
                     try:
                         args = json.loads(tool_call.function.arguments)
-                    except json.JSONDecodeError:
+                    except json.JSONDecodeError as e:
                         result = ToolResult(
                             success=False,
-                            message=f"Tool_call_id: {tool_call.id}, arguments: {args}, arguments not found",
-                            code="ARGUMENTS_NOT_FOUND",
+                            message=f"Неверный формат JSON аргументов: {e}",
+                            code="JSON_PARSE_ERROR",
                         )
 
                     else:
+                        ctx = ToolContext(
+                            call_session_id=call_session_id,
+                            tool_call_id=tool_call.id,
+                        )
+
                         result = await self._registry.execute(
                             name=tool_call.function.name,
                             ctx=ctx,
