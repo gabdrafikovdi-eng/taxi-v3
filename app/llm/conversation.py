@@ -7,9 +7,10 @@ from app.llm.client import LLMClient
 from app.llm.message_mapper import to_llm_message
 from app.models.messages import Message, MessageRole, ToolCallRecord
 from app.repositories.message_repo import MessageRepository
-from app.tools.base import ToolContext
+from app.tools.base import ToolContext, ToolResult
 from app.tools.registry import ToolRegistry
 from app.tools.availability import OrderToolAvailability
+from app.core.config import config_settings
 
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,7 @@ class ConversationManager:
         self._registry = tool_registry
         self._availability = tool_availability
         self._message_repo = message_repo
+        self.max_iterations = config_settings.MAX_ITERATIONS
 
     async def handle_message(
         self,
@@ -41,8 +43,7 @@ class ConversationManager:
         logger.info("=" * 60)
         logger.info("ПОЛЬЗОВАТЕЛЬ: %s", user_message)
 
-        max_iterations = 10
-        for iteration in range(max_iterations):
+        for iteration in range(self.max_iterations):
             messages = await self._message_repo.get_by_call_session(call_session_id)
             messages_llm = to_llm_message(messages)
 
@@ -56,6 +57,8 @@ class ConversationManager:
             response = await self._llm.chat(
                 messages_llm, tools=tools if tools else None
             )
+            if response is None:
+                return "Извините, сейчас не могу ответить из-за технической ошибки."
             logger.info("RAW RESPONSE: %s", response.model_dump())
 
             # Если есть текст — финальный ответ
@@ -91,7 +94,7 @@ class ConversationManager:
                     content=response.content,
                 )
                 await self._message_repo.add(message=assistant_msg_db)
-                await self._message_repo.session.commit()
+                await self._message_repo.session.flush()
 
                 # Выполняем каждый tool_call
                 for tool_call in response.tool_calls:
@@ -122,13 +125,19 @@ class ConversationManager:
                     try:
                         args = json.loads(tool_call.function.arguments)
                     except json.JSONDecodeError:
-                        args = {}
+                        result = ToolResult(
+                            success=False,
+                            message=f"Tool_call_id: {tool_call.id}, arguments: {args}, arguments not found",
+                            code="ARGUMENTS_NOT_FOUND",
+                        )
 
-                    result = await self._registry.execute(
-                        name=tool_call.function.name,
-                        ctx=ctx,
-                        arguments=args,
-                    )
+                    else:
+                        result = await self._registry.execute(
+                            name=tool_call.function.name,
+                            ctx=ctx,
+                            arguments=args,
+                        )
+
                     sequence_number = await self._message_repo.get_next_sequence_number(
                         call_session_id
                     )
@@ -156,7 +165,7 @@ class ConversationManager:
         return "Превышено максимальное количество итераций."
 
     async def _save_user_message(
-        self, call_session_id: str, content: str, role: MessageRole
+        self, call_session_id: UUID, content: str, role: MessageRole
     ) -> None:
         sequence_number = await self._message_repo.get_next_sequence_number(
             call_session_id=call_session_id

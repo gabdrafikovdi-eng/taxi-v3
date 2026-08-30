@@ -16,12 +16,7 @@ def to_llm_message(
 
     result: list[dict[str, Any]] = []
 
-    sorted_messages = sorted(
-        messages,
-        key=lambda message: message.sequence_number,
-    )
-
-    for message in sorted_messages:
+    for message in messages:
         if message.role == MessageRole.SYSTEM:
             result.append(
                 {

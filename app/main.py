@@ -4,7 +4,7 @@ import logging
 from uuid import uuid4
 
 from app.core.database import async_session_factory
-from app.llm.system_promt import SYSTEM_PROMPT
+from app.llm.system_prompt import SYSTEM_PROMPT
 from app.models.call_session import CallSession, CallChannel, HandledBy
 from app.models.messages import Message, MessageRole
 from app.repositories.call_session_repo import CallSessionRepository

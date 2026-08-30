@@ -38,6 +38,9 @@ class Settings(BaseSettings):
 
     MAX_ACTIVE_ORDERS: int = 3  # Максимум активных заказов в одном звонке. Зачем: защита от бесконечного создания заказов LLM.
     MAX_WAYPOINTS: int = 5  # Максимум промежуточных остановок в одном заказе. Зачем: защита от слишком длинных маршрутов.
+    MAX_ITERATIONS: int = 10  # Максимальнное количество итераций для LLM в один заход.
+    MAX_RETRIES_LLM_CLIENT: int = 3  # Автоматический повтор при сбоях сети
+    TIMEOUT_LLM: float = 30.0  # Timeout при сбоях сети
 
 
 config_settings = Settings()
