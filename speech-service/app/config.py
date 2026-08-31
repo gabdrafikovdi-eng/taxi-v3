@@ -11,7 +11,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Настройки сервиса: STT (GigaAM), TTS (Silero), сеть и логирование."""
+    """Настройки сервиса: STT (GigaAM v2/v3/multilingual), TTS (edge-tts), сеть и логирование."""
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -22,23 +22,34 @@ class Settings(BaseSettings):
 
     # STT (GigaAM)
     STT_MODEL: str = Field(
-        default="gigaam-v3-rnnt",
-        description="Имя модели GigaAM, например gigaam-v3-rnnt",
+        default="gigaam_v3_rnnt",
+        description="Канонический ключ модели из реестра, например gigaam_v3_rnnt",
+    )
+    STT_LANGUAGE: str = Field(
+        default="ru",
+        description="Язык распознавания (метаданные; gigaam не принимает language в transcribe)",
     )
     STT_DEVICE: str = Field(
-        default="cuda:0",
+        default="cpu",
         description="Устройство для GigaAM: 'cuda:0' на GPU-сервере, 'cpu' на Mac",
     )
     STT_FALLBACK_TO_CPU: bool = Field(
         default=True,
         description="Если CUDA недоступна — загружать GigaAM на CPU",
     )
+    STT_BENCHMARK_RELEASES_PRODUCTION: bool = Field(
+        default=False,
+        description=(
+            "Выгружать production-модель STT на время benchmark"
+            " (экономия RAM на машинах с 8 GB unified memory;"
+            " следующий production-запрос перезагрузит модель лениво)"
+        ),
+    )
 
-    # TTS (Silero)
-    TTS_SPEAKER: str = Field(default="baya", description="Голос Silero TTS")
-    TTS_SAMPLE_RATE: int = Field(
-        default=48000,
-        description="Частота дискретизации TTS (8000, 24000 или 48000)",
+    # TTS (edge-tts, облачный Microsoft)
+    TTS_VOICE: str = Field(
+        default="ru-RU-DmitryNeural",
+        description="Голос edge-tts (например, ru-RU-DmitryNeural или ru-RU-SvetlanaNeural)",
     )
 
     # Общие настройки сервиса

@@ -12,10 +12,13 @@ import torch
 TARGET_SAMPLE_RATE = 16000
 
 
-def mulaw_to_pcm16(audio_bytes: bytes, sample_rate: int = 8000) -> bytes:
-    """Декодировать G.711 µ-law в PCM16 через libsndfile (100% стандарт)."""
+def mulaw_to_pcm16(audio_bytes: bytes, sample_rate: int = 8000) -> tuple[bytes, int]:
+    """Декодировать G.711 µ-law в PCM16 через libsndfile (100% стандарт).
+
+    :return: ``(pcm_bytes, sample_rate)``.
+    """
     if not audio_bytes:
-        return b""
+        return b"", sample_rate
     with io.BytesIO(audio_bytes) as f:
         # format='RAW' говорит soundfile не искать WAV-заголовок
         data, _ = sf.read(
@@ -29,10 +32,13 @@ def mulaw_to_pcm16(audio_bytes: bytes, sample_rate: int = 8000) -> bytes:
     return data.tobytes(), sample_rate
 
 
-def alaw_to_pcm16(audio_bytes: bytes, sample_rate: int = 8000) -> bytes:
-    """Декодировать G.711 A-law в PCM16 через libsndfile (100% стандарт)."""
+def alaw_to_pcm16(audio_bytes: bytes, sample_rate: int = 8000) -> tuple[bytes, int]:
+    """Декодировать G.711 A-law в PCM16 через libsndfile (100% стандарт).
+
+    :return: ``(pcm_bytes, sample_rate)``.
+    """
     if not audio_bytes:
-        return b""
+        return b"", sample_rate
     with io.BytesIO(audio_bytes) as f:
         data, _ = sf.read(
             f,
@@ -50,8 +56,11 @@ def resample(audio_bytes: bytes, from_rate: int, to_rate: int) -> bytes:
     if not audio_bytes or from_rate == to_rate:
         return audio_bytes
 
-    # Преобразуем байты в тензор float32 (torchaudio требует float)
-    samples = torch.from_numpy(np.frombuffer(audio_bytes, dtype=np.int16)).float()
+    # Преобразуем байты в тензор float32 (torchaudio требует float).
+    # .astype() создаёт новый записываемый массив — избегаем предупреждения
+    # PyTorch про read-only буфер.
+    samples = np.frombuffer(audio_bytes, dtype=np.int16).astype(np.float32)
+    samples = torch.from_numpy(samples)
     # Добавляем размерность канала: (samples,) -> (1, samples)
     samples = samples.unsqueeze(0)
 

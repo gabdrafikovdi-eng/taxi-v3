@@ -1,0 +1,77 @@
+name: taxi-telephony
+
+services:
+  # ---------------------------------------------------------------------------
+  # Asterisk 22.10.1 — SIP/PBX ядро: PJSIP (GoIP4), RTP, ARI.
+  # Конфигурация хранится в ./asterisk/config и рендерится при старте
+  # (секреты подставляются из окружения, см. asterisk/scripts/render-config.sh).
+  # ---------------------------------------------------------------------------
+  asterisk:
+    image: andrius/asterisk:22.10.1_debian-trixie
+    container_name: taxi-asterisk
+    restart: unless-stopped
+    entrypoint:
+      - /bin/sh
+      - -c
+      - /render/scripts/render-config.sh && exec /usr/local/bin/entrypoint.sh "$$@"
+      - sh-entry
+    command: ["/usr/sbin/asterisk", "-f", "-U", "asterisk", "-p"]
+    environment:
+      ARI_USERNAME: ${ASTERISK_ARI_USERNAME:-taxi}
+      ARI_PASSWORD: ${ASTERISK_ARI_PASSWORD:-change-me-strong}
+      GOIP_SIP_PASSWORD: ${GOIP_SIP_PASSWORD:-goip4-secret}
+      GOIP_AUTH_MODE: ${GOIP_AUTH_MODE:-digest}
+      GOIP_HOST: ${GOIP_HOST:-192.168.1.50}
+      MEDIA_FORMAT: ${MEDIA_FORMAT:-ulaw}
+      # Внешний IP хоста для SDP/Via (NAT-коррекция, см. render-config.sh).
+      # Пусто = direct routing (media 172.x, что ломает RTP для GoIP в LAN).
+      ASTERISK_PUBLIC_IP: ${ASTERISK_PUBLIC_IP:-}
+    volumes:
+      - ./asterisk/config:/render/config:ro
+      - ./asterisk/scripts:/render/scripts:ro
+    ports:
+      - "5060:5060/udp"
+      - "5060:5060/tcp"
+      - "8088:8088"
+      # Узкий выделенный RTP-диапазон Asterisk (см. asterisk/config/rtp.conf).
+      # В production порт публикуется только на VPN/private-интерфейсе.
+      - "10000-10100:10000-10100/udp"
+    healthcheck:
+      test: ["CMD-SHELL", "asterisk -rx 'core waitfullybooted' >/dev/null 2>&1 && asterisk -rx 'ari show apps' 2>/dev/null | grep -q ${ASTERISK_ARI_APP:-taxi}"]
+      interval: 15s
+      timeout: 10s
+      retries: 6
+      start_period: 20s
+    networks: [taxi]
+
+  # ---------------------------------------------------------------------------
+  # telephony-service — orchestration: ARI-клиент, сессии звонков,
+  # RTP-медиа, интеграция со speech-service и backend.
+  # ---------------------------------------------------------------------------
+  telephony:
+    build: .
+    image: taxi-telephony:latest
+    container_name: taxi-telephony
+    restart: unless-stopped
+    depends_on: [asterisk]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      ASTERISK_ARI_URL: http://asterisk:8088
+      TELEPHONY_EXTERNAL_HOST: taxi-telephony
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "8090:8090"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; r=urllib.request.urlopen('http://127.0.0.1:8090/readyz', timeout=3); sys.exit(0 if r.status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    networks: [taxi]
+
+networks:
+  taxi:
+    driver: bridge

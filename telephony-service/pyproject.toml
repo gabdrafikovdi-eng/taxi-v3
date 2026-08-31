@@ -1,0 +1,25 @@
+[project]
+name = "taxi-telephony-service"
+version = "0.1.0"
+description = "Telephony orchestration service for taxi-v3: Asterisk ARI + speech-service + backend"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "aiohttp>=3.9.0",
+    "pydantic>=2.7.0",
+    "pydantic-settings>=2.3.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-q"
+markers = [
+    "integration: тесты, требующие запущенных внешних сервисов (Asterisk/speech-service)",
+]

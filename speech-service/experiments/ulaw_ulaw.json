@@ -1,0 +1,21 @@
+{
+  "ulaw_prod": {
+    "gigaam_v2_ctc": "алло",
+    "gigaam_v2_rnnt": "алло",
+    "gigaam_v3_ctc": "алло",
+    "gigaam_v3_rnnt": "алло"
+  },
+  "ulaw_bench_buggy": {
+    "gigaam_v2_ctc": "а",
+    "gigaam_v2_rnnt": "",
+    "gigaam_v3_ctc": "се",
+    "gigaam_v3_rnnt": ""
+  },
+  "ulaw_bench_fixed": {
+    "gigaam_v2_ctc": "алло",
+    "gigaam_v2_rnnt": "алло",
+    "gigaam_v3_ctc": "алло",
+    "gigaam_v3_rnnt": "алло"
+  },
+  "ulaw_sample_rate_in": 8000
+}
